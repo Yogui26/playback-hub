@@ -50,8 +50,8 @@ docker compose up -d
 
 Le dashboard est ensuite disponible sur `http://<ton-serveur>:8080`.
 
-Le conteneur tourne avec l'utilisateur 1000. Si le dossier `./data` appartient à un autre utilisateur :
-`sudo chown 1000:1000 data`.
+Le conteneur prépare lui-même le dossier `./data`, puis tourne sans privilèges avec l'utilisateur `PUID:PGID`
+(1000:1000 par défaut).
 
 ## Configuration
 
@@ -60,6 +60,7 @@ Le conteneur tourne avec l'utilisateur 1000. Si le dossier `./data` appartient �
 | `EMBY_URL`, `EMBY_API_KEY` | – | Adresse et clé API du serveur Emby |
 | `JELLYFIN_URL`, `JELLYFIN_API_KEY` | – | Adresse et clé API du serveur Jellyfin |
 | `TZ` | UTC | Fuseau horaire (le même que celui des serveurs) |
+| `PUID`, `PGID` | `1000` | Utilisateur et groupe propriétaires des données |
 | `SYNC_INTERVAL_MINUTES` | `15` | Fréquence de synchronisation |
 | `MIN_PLAY_SECONDS` | `0` | Ignore les lectures plus courtes que ce seuil |
 | `AUTH_USER`, `AUTH_PASSWORD` | – | Protège le dashboard par un mot de passe (authentification HTTP Basic) |
