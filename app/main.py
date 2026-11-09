@@ -64,6 +64,14 @@ def api_dashboard(days: int = 30, source: str = "all", person: str = ""):
     return stats.dashboard(max(0, min(days, 3660)), source, person)
 
 
+@app.get("/api/plays")
+def api_plays(days: int = 30, source: str = "all", person: str = "", include: str = "", exclude: str = "",
+              type: str = "", method: str = "", scope: str = "", sort: str = "date", order: str = "desc",
+              page: int = 1, per_page: int = 25):
+    return stats.plays(max(0, min(days, 3660)), source, person, include, exclude, type, method, scope,
+                       sort, order, page, per_page)
+
+
 @app.get("/api/status")
 def api_status():
     return stats.status()

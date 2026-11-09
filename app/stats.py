@@ -142,6 +142,55 @@ def dashboard(days: int, source: str, person: str) -> dict:
         }
 
 
+_SORTS = {
+    "date": "date_created", "server": "server", "person": "fold(person)", "title": "fold(item_name)",
+    "device": "fold(device)", "ip": "ip", "method": "method", "duration": "duration",
+}
+_HAYSTACK = ("fold(person || ' ' || COALESCE(item_name, '') || ' ' || COALESCE(device, '') || ' ' || "
+             "COALESCE(client, '') || ' ' || COALESCE(ip, '') || ' ' || COALESCE(method, '') || ' ' || server)")
+
+
+def _terms(text: str) -> list[str]:
+    return [t for t in (db.fold(x).strip() for x in (text or "").split(",")) if t]
+
+
+def plays(days: int, source: str, person: str, include: str = "", exclude: str = "", item_type: str = "",
+          method: str = "", scope: str = "", sort: str = "date", order: str = "desc",
+          page: int = 1, per_page: int = 25) -> dict:
+    """Historique paginé : filtres globaux + recherche, exclusion et tri propres au tableau."""
+    where, params = _where(days, source, person)
+    for term in _terms(include):           # tous les termes doivent être présents
+        where += f" AND instr({_HAYSTACK}, ?) > 0"
+        params.append(term)
+    for term in _terms(exclude):           # aucun des termes ne doit être présent
+        where += f" AND instr({_HAYSTACK}, ?) = 0"
+        params.append(term)
+    if item_type:
+        where += " AND lower(item_type) = lower(?)"
+        params.append(item_type)
+    if method:
+        where += " AND method = ?"
+        params.append(method)
+    if scope in ("local", "remote"):
+        where += " AND ip_scope = ?"
+        params.append(scope)
+    elif scope == "unknown":
+        where += " AND ip IS NULL"
+    column = _SORTS.get(sort, "date_created")
+    direction = "ASC" if order == "asc" else "DESC"
+    per_page = max(1, min(int(per_page), 500))
+    with db.connect() as con:
+        total, seconds = con.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(duration), 0) FROM v_plays WHERE {where}", params).fetchone()
+        pages = max(1, -(-total // per_page))
+        page = max(1, min(int(page), pages))
+        rows = [dict(r) for r in con.execute(
+            f"SELECT date_created, server, person, item_name, item_type, method, client, device, duration, ip, ip_scope "
+            f"FROM v_plays WHERE {where} ORDER BY {column} {direction}, date_created DESC, src_rowid DESC "
+            f"LIMIT ? OFFSET ?", params + [per_page, (page - 1) * per_page])]
+    return {"total": total, "seconds": seconds, "page": page, "pages": pages, "per_page": per_page, "rows": rows}
+
+
 def status() -> dict:
     with db.connect() as con:
         state = {r["server"]: dict(r) for r in con.execute("SELECT * FROM sync_state")}

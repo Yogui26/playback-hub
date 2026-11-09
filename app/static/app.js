@@ -122,16 +122,64 @@ function renderHeatmap(grid) {
   });
   $("heatmap").innerHTML = html;
 }
-function renderRecent(rows) {
-  $("recent").querySelector("tbody").innerHTML = rows.map((r) => `<tr>
+/* ---------- tableau des lectures : filtres, tri, pages ---------- */
+const table = { include: "", exclude: "", type: "", method: "", scope: "", sort: "date", order: "desc", page: 1, per_page: 25 };
+let playsRequest = 0;
+function renderPlays(d) {
+  table.page = d.page;
+  $("recent").querySelector("tbody").innerHTML = d.rows.map((r) => `<tr>
     <td>${fmtDate(r.date_created)}</td>
     <td><i class="dot ${esc(r.server)}"></i>${esc(LABEL[r.server] || r.server)}</td>
     <td>${esc(r.person)}</td><td class="title">${esc(r.item_name)}</td>
     <td>${esc(r.device)} <span class="muted">· ${esc(r.client)}</span></td>
     <td class="ip">${r.ip ? esc(r.ip) : '<span class="muted">—</span>'}</td>
     <td>${esc(r.method)}</td><td class="num">${dur(r.duration)}</td></tr>`).join("")
-    || '<tr><td colspan="8" class="none">Aucune lecture sur cette période.</td></tr>';
+    || '<tr><td colspan="8" class="none">Aucune lecture ne correspond à ces filtres.</td></tr>';
+  $("plays-count").textContent = d.total
+    ? `${nf.format(d.total)} lecture${d.total > 1 ? "s" : ""} · ${dur(d.seconds)}` : "";
+  const from = d.total ? (d.page - 1) * d.per_page + 1 : 0;
+  const to = Math.min(d.page * d.per_page, d.total);
+  $("p-page").textContent = `${nf.format(from)}–${nf.format(to)} sur ${nf.format(d.total)} · page ${d.page} / ${d.pages}`;
+  $("p-first").disabled = $("p-prev").disabled = d.page <= 1;
+  $("p-last").disabled = $("p-next").disabled = d.page >= d.pages;
+  $("p-last").dataset.page = d.pages;
+  document.querySelectorAll("#recent th[data-sort]").forEach((th) => {
+    if (th.dataset.sort === table.sort) th.setAttribute("aria-sort", table.order === "asc" ? "ascending" : "descending");
+    else th.removeAttribute("aria-sort");
+  });
 }
+async function loadPlays() {
+  const id = ++playsRequest;
+  const q = new URLSearchParams({ days: state.days, source: state.source, person: state.person, ...table });
+  const d = await api(`/api/plays?${q}`);
+  if (id === playsRequest) renderPlays(d);  // ignore les réponses arrivées dans le désordre
+}
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+const refreshPlays = () => { table.page = 1; loadPlays().catch(() => {}); };
+const typed = debounce(refreshPlays, 250);
+[["p-include", "include"], ["p-exclude", "exclude"]].forEach(([id, key]) =>
+  $(id).addEventListener("input", (e) => { table[key] = e.target.value; typed(); }));
+[["p-type", "type"], ["p-method", "method"], ["p-scope", "scope"]].forEach(([id, key]) =>
+  $(id).addEventListener("change", (e) => { table[key] = e.target.value; refreshPlays(); }));
+$("p-size").addEventListener("change", (e) => { table.per_page = Number(e.target.value); refreshPlays(); });
+$("p-reset").addEventListener("click", () => {
+  Object.assign(table, { include: "", exclude: "", type: "", method: "", scope: "", sort: "date", order: "desc" });
+  ["p-include", "p-exclude", "p-type", "p-method", "p-scope"].forEach((id) => { $(id).value = ""; });
+  refreshPlays();
+});
+$("recent").querySelector("thead").addEventListener("click", (e) => {
+  const th = e.target.closest("th[data-sort]");
+  if (!th) return;
+  if (table.sort === th.dataset.sort) table.order = table.order === "asc" ? "desc" : "asc";
+  else { table.sort = th.dataset.sort; table.order = ["date", "duration"].includes(table.sort) ? "desc" : "asc"; }
+  refreshPlays();
+});
+const goto = (page) => { table.page = Math.max(1, page); loadPlays().catch(() => {}); };
+$("p-first").addEventListener("click", () => goto(1));
+$("p-prev").addEventListener("click", () => goto(table.page - 1));
+$("p-next").addEventListener("click", () => goto(table.page + 1));
+$("p-last").addEventListener("click", (e) => goto(Number(e.currentTarget.dataset.page) || 1));
+
 const scopeBadge = (scope) => scope === "remote" ? '<span class="badge remote">Distant</span>'
   : scope === "local" ? '<span class="badge">Local</span>' : '<span class="muted">—</span>';
 function renderIps(d) {
@@ -170,7 +218,6 @@ function render(d) {
   barList("l-types", d.types.map((t) => ({ ...t, name: TYPES[t.name.toLowerCase()] || t.name })));
   renderHeatmap(d.heatmap);
   renderIps(d);
-  renderRecent(d.recent);
   $("updated").textContent = `Affichage du ${fmtDate(d.generated)}`;
 }
 function renderStatus(s) {
@@ -193,6 +240,7 @@ async function load() {
   const [d, s] = await Promise.all([api(`/api/dashboard?${q}`), api("/api/status")]);
   renderStatus(s);
   render(d);
+  await loadPlays();
 }
 function segmented(id, key, cast) {
   $(id).addEventListener("click", (e) => {
@@ -200,12 +248,13 @@ function segmented(id, key, cast) {
     if (!b) return;
     $(id).querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
     state[key] = cast(b.dataset.v);
+    table.page = 1;
     load();
   });
 }
 segmented("f-days", "days", Number);
 segmented("f-source", "source", String);
-$("f-person").addEventListener("change", (e) => { state.person = e.target.value; load(); });
+$("f-person").addEventListener("change", (e) => { state.person = e.target.value; table.page = 1; load(); });
 
 $("btn-sync").addEventListener("click", async (e) => {
   const b = e.currentTarget;

@@ -1,6 +1,7 @@
 """Base SQLite unifiée."""
 import os
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
 
 from . import config
@@ -68,6 +69,12 @@ LEFT JOIN users u ON u.server = p.server AND u.user_id = p.user_id;
 """
 
 
+def fold(text) -> str:
+    """Minuscules sans accents, pour une recherche tolérante (« episode » trouve « Épisode »)."""
+    decomposed = unicodedata.normalize("NFKD", str(text or ""))
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+
 def _migrate(con) -> None:
     columns = {r[1] for r in con.execute("PRAGMA table_info(plays)")}
     if "ip" not in columns:
@@ -92,6 +99,7 @@ def init() -> None:
 def connect():
     con = sqlite3.connect(config.DB_PATH, timeout=30)
     con.row_factory = sqlite3.Row
+    con.create_function("fold", 1, fold, deterministic=True)
     try:
         yield con
         con.commit()

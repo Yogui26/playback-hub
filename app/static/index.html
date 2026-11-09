@@ -77,11 +77,32 @@
   </section>
 
   <section class="card">
-    <h2>Dernières lectures</h2>
+    <h2>Lectures <span class="muted small" id="plays-count"></span></h2>
+    <div class="tools">
+      <label>Inclure <input type="text" id="p-include" placeholder="ex. dune, marie" title="Tous les mots doivent être présents. Sépare-les par des virgules."></label>
+      <label>Exclure <input type="text" id="p-exclude" placeholder="ex. transcodage" title="Les lignes contenant l'un de ces mots sont masquées. Sépare-les par des virgules."></label>
+      <label>Type <select id="p-type"><option value="">Tous</option><option value="Movie">Films</option><option value="Episode">Épisodes</option><option value="Audio">Musique</option></select></label>
+      <label>Méthode <select id="p-method"><option value="">Toutes</option><option>Direct Play</option><option>Direct Stream</option><option>Transcodage</option></select></label>
+      <label>Réseau <select id="p-scope"><option value="">Tous</option><option value="local">Local</option><option value="remote">Distant</option><option value="unknown">Inconnu</option></select></label>
+      <button type="button" id="p-reset">Réinitialiser</button>
+    </div>
     <div class="table-wrap"><table id="recent">
-      <thead><tr><th>Date</th><th>Serveur</th><th>Utilisateur</th><th>Titre</th><th>Appareil</th><th>Adresse IP</th><th>Méthode</th><th class="num">Durée</th></tr></thead>
+      <thead><tr>
+        <th data-sort="date">Date</th><th data-sort="server">Serveur</th><th data-sort="person">Utilisateur</th>
+        <th data-sort="title">Titre</th><th data-sort="device">Appareil</th><th data-sort="ip">Adresse IP</th>
+        <th data-sort="method">Méthode</th><th data-sort="duration" class="num">Durée</th>
+      </tr></thead>
       <tbody></tbody>
     </table></div>
+    <div class="pager">
+      <label>Lignes par page <select id="p-size"><option>10</option><option selected>25</option><option>50</option><option>100</option><option>250</option></select></label>
+      <span class="spacer"></span>
+      <button type="button" id="p-first" aria-label="Première page">«</button>
+      <button type="button" id="p-prev">Précédente</button>
+      <span id="p-page" class="muted"></span>
+      <button type="button" id="p-next">Suivante</button>
+      <button type="button" id="p-last" aria-label="Dernière page">»</button>
+    </div>
   </section>
 </main>
 

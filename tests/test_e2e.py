@@ -184,3 +184,45 @@ def test_migration_backfills_ips(env):
     asyncio.run(collector.sync_all())
     assert stats.dashboard(0, "emby", "")["totals"]["ips"] == 4
     assert not collector._full_resync(config.load_servers()[0])
+
+
+def test_plays_filters_sort_and_pagination(env):
+    from app import stats
+    everything = stats.plays(0, "all", "")
+    assert everything["total"] == stats.dashboard(0, "all", "")["totals"]["plays"]
+    assert everything["pages"] == -(-everything["total"] // 25) and len(everything["rows"]) == 25
+
+    # Pagination : les pages se suivent sans doublon ni trou.
+    seen = []
+    for page in range(1, 4):
+        seen += [(r["date_created"], r["server"], r["item_name"], r["person"]) for r in
+                 stats.plays(0, "emby", "", page=page, per_page=150)["rows"]]
+    assert len(seen) == 400
+    assert stats.plays(0, "emby", "", page=99, per_page=150)["page"] == 3
+
+    # Inclure : tous les termes, sans tenir compte des accents ni de la casse.
+    inc = stats.plays(0, "emby", "", include="AMELIE, yonel", per_page=500)
+    assert inc["total"] > 0
+    assert all("Amélie" in r["item_name"] and r["person"].lower() == "yonel" for r in inc["rows"])
+
+    # Exclure : aucun des termes.
+    exc = stats.plays(0, "emby", "", exclude="dune, transcodage", per_page=500)
+    assert 0 < exc["total"] < 400
+    assert all(r["item_name"] != "Dune" and r["method"] != "Transcodage" for r in exc["rows"])
+    only = stats.plays(0, "emby", "", include="dune", per_page=500)["total"]
+    without = stats.plays(0, "emby", "", exclude="dune", per_page=500)["total"]
+    assert only + without == 400
+
+    # Listes déroulantes.
+    movies = stats.plays(0, "emby", "", item_type="Movie", method="Direct Play", scope="remote", per_page=500)
+    assert movies["total"] > 0
+    assert all(r["item_type"] == "Movie" and r["method"] == "Direct Play" and r["ip_scope"] == "remote"
+               for r in movies["rows"])
+    assert movies["seconds"] == sum(r["duration"] for r in movies["rows"])
+
+    # Tri.
+    asc = [r["duration"] for r in stats.plays(0, "emby", "", sort="duration", order="asc", per_page=500)["rows"]]
+    assert asc == sorted(asc)
+    desc = [r["date_created"] for r in stats.plays(0, "emby", "", per_page=500)["rows"]]
+    assert desc == sorted(desc, reverse=True)
+    assert stats.plays(0, "emby", "", sort="n'importe quoi; DROP TABLE plays")["total"] == 400
