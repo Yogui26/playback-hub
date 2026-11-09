@@ -67,6 +67,41 @@ def _heatmap(con, where, params):
     return grid
 
 
+_SCOPE = "CASE ip_scope WHEN 'local' THEN 'Réseau local' WHEN 'remote' THEN 'Distant' ELSE 'Adresse inconnue' END"
+
+
+def _unique(names: str) -> list[str]:
+    out, seen = [], set()
+    for n in (names or "").split("\x1f"):
+        if n and n.lower() not in seen:
+            seen.add(n.lower())
+            out.append(n)
+    return sorted(out, key=str.lower)
+
+
+def _ips(con, where, params):
+    rows = []
+    for r in con.execute(
+        f"SELECT ip, ip_scope AS scope, {_SPLIT}, MAX(date_created) AS last_seen, "
+        f"GROUP_CONCAT(DISTINCT person || char(31)) AS people "
+        f"FROM v_plays WHERE {where} AND ip IS NOT NULL GROUP BY ip ORDER BY seconds DESC LIMIT 30", params):
+        d = dict(r)
+        d["people"] = _unique((d["people"] or "").replace("\x1f,", "\x1f"))
+        rows.append(d)
+    return rows
+
+
+def _people_ips(con, where, params):
+    return [dict(r) for r in con.execute(
+        f"SELECT MIN(person) AS name, COUNT(DISTINCT ip) AS ips, "
+        f"COUNT(DISTINCT CASE WHEN ip_scope = 'local' THEN ip END) AS local, "
+        f"COUNT(DISTINCT CASE WHEN ip_scope = 'remote' THEN ip END) AS remote, "
+        f"COALESCE(SUM(CASE WHEN ip_scope = 'remote' THEN duration END), 0) AS remote_seconds, "
+        f"SUM(duration) AS seconds "
+        f"FROM v_plays WHERE {where} AND ip IS NOT NULL GROUP BY lower(person) "
+        f"ORDER BY ips DESC, seconds DESC LIMIT 20", params)]
+
+
 def dashboard(days: int, source: str, person: str) -> dict:
     where, params = _where(days, source, person)
     with db.connect() as con:
@@ -74,13 +109,14 @@ def dashboard(days: int, source: str, person: str) -> dict:
             f"SELECT COALESCE(SUM(duration),0) AS seconds, COUNT(*) AS plays, "
             f"COUNT(DISTINCT lower(person)) AS people, "
             f"COUNT(DISTINCT lower(COALESCE(series, item_name))) AS titles, "
+            f"COUNT(DISTINCT ip) AS ips, "
             f"COALESCE(SUM(CASE WHEN server='emby' THEN duration ELSE 0 END),0) AS emby, "
             f"COALESCE(SUM(CASE WHEN server='jellyfin' THEN duration ELSE 0 END),0) AS jellyfin, "
             f"COALESCE(SUM(server='emby'),0) AS emby_plays, "
             f"COALESCE(SUM(server='jellyfin'),0) AS jellyfin_plays "
             f"FROM v_plays WHERE {where}", params).fetchone())
         recent = [dict(r) for r in con.execute(
-            f"SELECT date_created, server, person, item_name, item_type, method, client, device, duration "
+            f"SELECT date_created, server, person, item_name, item_type, method, client, device, duration, ip, ip_scope "
             f"FROM v_plays WHERE {where} ORDER BY date_created DESC LIMIT 40", params)]
         # La liste du filtre ne dépend pas de la personne sélectionnée.
         w_all, p_all = _where(0, "", "")
@@ -98,6 +134,9 @@ def dashboard(days: int, source: str, person: str) -> dict:
             "methods": _breakdown(con, where, params, "method", 6),
             "types": _breakdown(con, where, params, "item_type", 6),
             "heatmap": _heatmap(con, where, params),
+            "networks": _breakdown(con, where, params, _SCOPE, 3),
+            "ips": _ips(con, where, params),
+            "people_ips": _people_ips(con, where, params),
             "recent": recent,
             "people_filter": people_filter,
         }

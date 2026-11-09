@@ -27,9 +27,11 @@ async def lifespan(app: FastAPI):
         log.warning("Aucun serveur configuré : renseigner EMBY_URL/EMBY_API_KEY et/ou JELLYFIN_URL/JELLYFIN_API_KEY")
     for s in servers:
         log.info("Serveur %s : %s", s.label, s.url)
-    task = asyncio.create_task(collector.run_forever())
+    tasks = [asyncio.create_task(collector.run_forever()),
+             asyncio.create_task(collector.poll_sessions_forever())]
     yield
-    task.cancel()
+    for task in tasks:
+        task.cancel()
 
 
 app = FastAPI(title="Playback Hub", lifespan=lifespan, docs_url=None, redoc_url=None)

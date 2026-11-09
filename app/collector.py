@@ -1,5 +1,6 @@
 """Récupère les données des plugins Playback Reporting d'Emby et de Jellyfin."""
 import asyncio
+import ipaddress
 import logging
 import re
 from datetime import datetime, timedelta
@@ -17,6 +18,31 @@ _EPISODE = re.compile(r"^(?P<series>.+?) - s\d+e\d+", re.IGNORECASE)
 
 def _norm_id(value) -> str:
     return str(value or "").replace("-", "").lower()
+
+
+def _norm_ip(value) -> str | None:
+    """Nettoie une adresse : retire le port, les crochets et le préfixe IPv4-dans-IPv6."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.startswith("["):                      # [2001:db8::1]:8096
+        text = text[1:].split("]")[0]
+    elif text.count(":") == 1:                    # 192.168.1.5:8096
+        text = text.split(":")[0]
+    text = text.split("%")[0]
+    try:
+        ip = ipaddress.ip_address(text)
+    except ValueError:
+        return None
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return str(ip)
+
+
+def _ip_scope(ip: str | None) -> str | None:
+    if not ip:
+        return None
+    return "remote" if ipaddress.ip_address(ip).is_global else "local"
 
 
 def _to_int(value) -> int:
@@ -87,6 +113,62 @@ def _known_max(server: Server) -> int:
     return row[0]
 
 
+def _full_resync(server: Server) -> bool:
+    with db.connect() as con:
+        return con.execute("SELECT 1 FROM meta WHERE key = ?", (f"full_resync:{server.key}",)).fetchone() is not None
+
+
+async def poll_sessions() -> None:
+    """Note l'adresse IP des lectures en cours (Jellyfin ne l'enregistre pas dans son plugin)."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    seen = []
+    async with httpx.AsyncClient(timeout=15, verify=config.VERIFY_TLS, follow_redirects=True) as client:
+        for server in config.load_servers():
+            try:
+                r = await client.get(f"{server.api_base}/Sessions", headers=server.headers)
+                r.raise_for_status()
+                for session in r.json():
+                    item = session.get("NowPlayingItem") or {}
+                    ip = _norm_ip(session.get("RemoteEndPoint"))
+                    if item.get("Id") and session.get("UserId") and ip:
+                        seen.append((server.key, _norm_id(session["UserId"]), _norm_id(item["Id"]), ip, now, now))
+            except Exception as e:
+                log.debug("%s : sessions indisponibles (%s)", server.label, e)
+    with db.connect() as con:
+        con.executemany(
+            "INSERT INTO session_ips(server, user_id, item_id, ip, first_seen, last_seen) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(server, user_id, item_id, ip) DO UPDATE SET last_seen = excluded.last_seen",
+            seen,
+        )
+        con.execute("DELETE FROM session_ips WHERE last_seen < datetime('now', 'localtime', '-30 days')")
+
+
+def fill_missing_ips() -> None:
+    """Rattache aux lectures récentes sans adresse celle observée dans la session correspondante."""
+    with db.connect() as con:
+        rows = con.execute(
+            "SELECT p.server, p.src_rowid, ("
+            "  SELECT s.ip FROM session_ips s WHERE s.server = p.server AND s.user_id = p.user_id"
+            "  AND s.item_id = p.item_id AND s.last_seen >= datetime(p.date_created, '-10 minutes')"
+            "  AND s.first_seen <= datetime(p.date_created, '+' || (p.duration + 1800) || ' seconds')"
+            "  ORDER BY s.last_seen DESC LIMIT 1) AS ip "
+            "FROM plays p WHERE p.ip IS NULL AND p.date_created >= datetime('now', 'localtime', '-7 days')"
+        ).fetchall()
+        con.executemany(
+            "UPDATE plays SET ip = ?, ip_scope = ? WHERE server = ? AND src_rowid = ?",
+            [(r["ip"], _ip_scope(r["ip"]), r["server"], r["src_rowid"]) for r in rows if r["ip"]],
+        )
+
+
+async def poll_sessions_forever() -> None:
+    while True:
+        try:
+            await poll_sessions()
+        except Exception:
+            log.exception("erreur inattendue pendant la lecture des sessions")
+        await asyncio.sleep(config.SESSION_POLL_SECONDS)
+
+
 def _store(server: Server, rows: list[dict]) -> None:
     out = []
     for r in rows:
@@ -94,21 +176,24 @@ def _store(server: Server, rows: list[dict]) -> None:
         item_name = r.get("itemname") or ""
         raw_method = r.get("playbackmethod") or ""
         duration = max(0, _to_int(r.get("playduration")) - _to_int(r.get("pauseduration")))
+        ip = _norm_ip(r.get("remoteaddress") or r.get("remoteendpoint") or r.get("ipaddress"))
         out.append((
             server.key, _to_int(r.get("rid")), str(r.get("datecreated") or "")[:19],
-            _norm_id(r.get("userid")), str(r.get("itemid") or ""), item_type, item_name,
+            _norm_id(r.get("userid")), _norm_id(r.get("itemid")), item_type, item_name,
             _series(item_type, item_name), _method(raw_method), raw_method,
-            r.get("clientname") or "Inconnu", r.get("devicename") or "Inconnu", duration,
+            r.get("clientname") or "Inconnu", r.get("devicename") or "Inconnu", duration, ip, _ip_scope(ip),
         ))
     with db.connect() as con:
         con.executemany(
             "INSERT INTO plays(server, src_rowid, date_created, user_id, item_id, item_type, item_name,"
-            " series, method, method_raw, client, device, duration) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            " series, method, method_raw, client, device, duration, ip, ip_scope)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(server, src_rowid) DO UPDATE SET date_created=excluded.date_created,"
             " user_id=excluded.user_id, item_id=excluded.item_id, item_type=excluded.item_type,"
             " item_name=excluded.item_name, series=excluded.series, method=excluded.method,"
             " method_raw=excluded.method_raw, client=excluded.client, device=excluded.device,"
-            " duration=excluded.duration",
+            " duration=excluded.duration, ip=COALESCE(excluded.ip, plays.ip),"
+            " ip_scope=COALESCE(excluded.ip_scope, plays.ip_scope)",
             out,
         )
 
@@ -123,7 +208,8 @@ async def sync_server(server: Server) -> int:
             except Exception as e:  # les stats restent utilisables sans les noms
                 log.warning("%s : liste des utilisateurs indisponible (%s)", server.label, e)
             # Nouvelles lignes + lignes récentes, dont la durée évolue encore pendant la lecture.
-            known = _known_max(server)
+            full = _full_resync(server)
+            known = 0 if full else _known_max(server)
             recent = (datetime.now() - timedelta(hours=config.RESYNC_WINDOW_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
             cursor = 0
             while True:
@@ -139,6 +225,10 @@ async def sync_server(server: Server) -> int:
                 cursor = max(_to_int(r.get("rid")) for r in rows)
                 if len(rows) < PAGE:
                     break
+        if full:
+            with db.connect() as con:
+                con.execute("DELETE FROM meta WHERE key = ?", (f"full_resync:{server.key}",))
+        fill_missing_ips()
         error = None
         log.info("%s : %d lignes synchronisées", server.label, fetched)
     except Exception as e:

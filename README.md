@@ -7,6 +7,7 @@ Un dashboard web unique pour les statistiques de lecture d'**Emby** et de **Jell
 - Classement des utilisateurs, des films et des séries
 - Applications, appareils, méthode de lecture (Direct Play, Direct Stream, transcodage)
 - Carte des heures de visionnage et dernières lectures
+- Adresses IP : lectures et durée par adresse, part du réseau local et de l'accès distant, adresses par utilisateur
 - Filtres par période, par serveur et par utilisateur
 - Regroupement des comptes d'une même personne entre les deux serveurs
 
@@ -62,6 +63,7 @@ Le conteneur prépare lui-même le dossier `./data`, puis tourne sans privilège
 | `TZ` | UTC | Fuseau horaire (le même que celui des serveurs) |
 | `PUID`, `PGID` | `1000` | Utilisateur et groupe propriétaires des données |
 | `SYNC_INTERVAL_MINUTES` | `15` | Fréquence de synchronisation |
+| `SESSION_POLL_SECONDS` | `60` | Fréquence de relevé des sessions actives (adresses IP) |
 | `MIN_PLAY_SECONDS` | `0` | Ignore les lectures plus courtes que ce seuil |
 | `AUTH_USER`, `AUTH_PASSWORD` | – | Protège le dashboard par un mot de passe (authentification HTTP Basic) |
 | `VERIFY_TLS` | `true` | Mettre `false` pour un certificat auto-signé |
@@ -75,14 +77,21 @@ Le conteneur prépare lui-même le dossier `./data`, puis tourne sans privilège
 - Sur Emby, la durée de pause est déduite du temps de lecture.
 - Deux comptes portant le même nom (sans tenir compte des majuscules) sont regroupés. Pour des noms
   différents, le bouton **Utilisateurs** permet de leur donner un nom commun.
+- Adresses IP : Emby les enregistre dans son plugin, donc tout l'historique est couvert. Le plugin de Jellyfin
+  ne les enregistre pas : Playback Hub relève les sessions actives toutes les minutes et rattache l'adresse à
+  la lecture correspondante. Seules les lectures faites pendant que le conteneur tourne ont donc une adresse.
 - Films et séries sont rapprochés entre les deux serveurs par leur titre.
 
 ## Limites connues
 
+- Derrière un reverse proxy, les serveurs voient l'adresse du proxy tant qu'il n'est pas déclaré chez eux
+  (Jellyfin : *Réseau → Proxys connus*). Toutes les lectures distantes porteraient alors la même adresse.
+- Sur Jellyfin, une lecture très courte, commencée et terminée entre deux relevés, reste sans adresse.
 - Les heures sont celles enregistrées par chaque serveur : Emby, Jellyfin et le conteneur doivent être sur le
   même fuseau horaire.
 - Un même film intitulé différemment sur les deux serveurs apparaît deux fois.
-- Sans mot de passe (`AUTH_USER` / `AUTH_PASSWORD`), le dashboard est lisible par toute personne qui y accède :
+- Sans mot de passe (`AUTH_USER` / `AUTH_PASSWORD`), le dashboard, adresses IP comprises, est lisible par toute
+  personne qui y accède :
   à ne pas exposer tel quel sur Internet.
 
 ## Développement

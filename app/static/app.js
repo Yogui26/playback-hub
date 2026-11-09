@@ -128,8 +128,26 @@ function renderRecent(rows) {
     <td><i class="dot ${esc(r.server)}"></i>${esc(LABEL[r.server] || r.server)}</td>
     <td>${esc(r.person)}</td><td class="title">${esc(r.item_name)}</td>
     <td>${esc(r.device)} <span class="muted">· ${esc(r.client)}</span></td>
+    <td class="ip">${r.ip ? esc(r.ip) : '<span class="muted">—</span>'}</td>
     <td>${esc(r.method)}</td><td class="num">${dur(r.duration)}</td></tr>`).join("")
-    || '<tr><td colspan="7" class="none">Aucune lecture sur cette période.</td></tr>';
+    || '<tr><td colspan="8" class="none">Aucune lecture sur cette période.</td></tr>';
+}
+const scopeBadge = (scope) => scope === "remote" ? '<span class="badge remote">Distant</span>'
+  : scope === "local" ? '<span class="badge">Local</span>' : '<span class="muted">—</span>';
+function renderIps(d) {
+  const n = d.totals.ips;
+  $("ip-count").textContent = n ? `${nf.format(n)} adresse${n > 1 ? "s" : ""} différente${n > 1 ? "s" : ""} sur la période` : "";
+  $("ips").querySelector("tbody").innerHTML = d.ips.map((r) => `<tr title="${esc(splitTitle(r))}">
+    <td class="ip">${esc(r.ip)}</td><td>${scopeBadge(r.scope)}</td>
+    <td class="people">${r.people.map(esc).join(", ")}</td>
+    <td>${r.emby > 0 ? '<i class="dot emby" title="Emby"></i>' : ""}${r.jellyfin > 0 ? '<i class="dot jellyfin" title="Jellyfin"></i>' : ""}</td>
+    <td class="num">${nf.format(r.plays)}</td><td class="num">${dur(r.seconds)}</td><td>${fmtDate(r.last_seen)}</td></tr>`).join("")
+    || '<tr><td colspan="7" class="none">Aucune adresse enregistrée sur cette période.</td></tr>';
+  barList("l-networks", d.networks);
+  $("people-ips").querySelector("tbody").innerHTML = d.people_ips.map((r) => `<tr>
+    <td>${esc(r.name)}</td><td class="num">${nf.format(r.ips)}</td><td class="num">${nf.format(r.remote)}</td>
+    <td class="num">${r.remote_seconds > 0 ? dur(r.remote_seconds) : "—"}</td></tr>`).join("")
+    || '<tr><td colspan="4" class="none">Aucune donnée.</td></tr>';
 }
 function renderPeopleFilter(names) {
   const sel = $("f-person");
@@ -151,6 +169,7 @@ function render(d) {
   barList("l-methods", d.methods);
   barList("l-types", d.types.map((t) => ({ ...t, name: TYPES[t.name.toLowerCase()] || t.name })));
   renderHeatmap(d.heatmap);
+  renderIps(d);
   renderRecent(d.recent);
   $("updated").textContent = `Affichage du ${fmtDate(d.generated)}`;
 }

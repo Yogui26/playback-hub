@@ -22,6 +22,8 @@ MOVIES = ["Dune", "Inception", "Le Fabuleux Destin d'Amélie Poulain", "Interste
 SERIES = ["Severance", "The Bear", "Le Bureau des légendes", "Dark"]
 CLIENTS = [("Emby for Android TV", "Shield Salon"), ("Emby Web", "Chrome"), ("Jellyfin Web", "Firefox"),
            ("Jellyfin Android", "Pixel 9"), ("Infuse", "Apple TV")]
+# Formats variés, comme en vrai : IPv4, IPv4 avec port, IPv4 encapsulée dans IPv6, adresse publique.
+EMBY_IPS = ["192.168.1.20", "192.168.1.21:8096", "::ffff:192.168.1.20", "82.64.10.5", "2a01:e0a:1:2::10"]
 METHODS = ["DirectPlay", "DirectStream", "Transcode (v:h264 a:aac)"]
 
 
@@ -53,7 +55,7 @@ def build_db(kind: str, path: str, seed: int, days: int = 120, n: int = 400) -> 
         row = [when.strftime("%Y-%m-%d %H:%M:%S.%f") + "0", uid, str(rnd.randrange(1000, 9999)), item_type, name,
                rnd.choice(METHODS), client, device, duration]
         if kind == "emby":
-            row += [rnd.randrange(0, 120), "192.168.1.20"]
+            row += [rnd.randrange(0, 120), rnd.choice(EMBY_IPS)]
         con.execute(f"INSERT INTO PlaybackActivity VALUES ({','.join('?' * len(row))})", row)
     con.commit()
     con.close()
@@ -61,6 +63,7 @@ def build_db(kind: str, path: str, seed: int, days: int = 120, n: int = 400) -> 
 
 def create_app(emby_db: str, jf_db: str) -> FastAPI:
     app = FastAPI()
+    app.state.sessions = {"emby": [], "jellyfin": []}
 
     def check(kind: str, request: Request) -> None:
         if kind == "emby":
@@ -96,8 +99,12 @@ def create_app(emby_db: str, jf_db: str) -> FastAPI:
             async def users(request: Request):
                 check(kind, request)
                 return [{"Id": uid, "Name": name} for uid, name in USERS[kind]]
-            return custom_query, users
-        cq, us = make()
+            async def sessions(request: Request):
+                check(kind, request)
+                return app.state.sessions[kind]
+            return custom_query, users, sessions
+        cq, us, se = make()
+        app.get(f"{prefix}/Sessions")(se)
         app.post(f"{prefix}/user_usage_stats/submit_custom_query")(cq)
         app.get(f"{prefix}/Users")(us)
     return app

@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS plays (
     client       TEXT,
     device       TEXT,
     duration     INTEGER NOT NULL DEFAULT 0,   -- secondes, pauses déduites
+    ip           TEXT,               -- adresse IP du lecteur
+    ip_scope     TEXT,               -- 'local' ou 'remote'
     PRIMARY KEY (server, src_rowid)
 );
 CREATE INDEX IF NOT EXISTS idx_plays_date ON plays(date_created);
@@ -41,6 +43,21 @@ CREATE TABLE IF NOT EXISTS sync_state (
     fetched    INTEGER DEFAULT 0
 );
 
+-- Adresses vues dans les sessions actives (pour les serveurs dont le plugin ne les enregistre pas).
+CREATE TABLE IF NOT EXISTS session_ips (
+    server     TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    item_id    TEXT NOT NULL,
+    ip         TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    PRIMARY KEY (server, user_id, item_id, ip)
+);
+
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+"""
+
+VIEW = """
 DROP VIEW IF EXISTS v_plays;
 CREATE VIEW v_plays AS
 SELECT p.*,
@@ -51,11 +68,24 @@ LEFT JOIN users u ON u.server = p.server AND u.user_id = p.user_id;
 """
 
 
+def _migrate(con) -> None:
+    columns = {r[1] for r in con.execute("PRAGMA table_info(plays)")}
+    if "ip" not in columns:
+        con.execute("ALTER TABLE plays ADD COLUMN ip TEXT")
+        con.execute("ALTER TABLE plays ADD COLUMN ip_scope TEXT")
+        # Les lectures déjà copiées n'ont pas d'adresse : on relit tout l'historique une fois.
+        con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('full_resync:emby', '1'), "
+                    "('full_resync:jellyfin', '1')")
+
+
 def init() -> None:
     os.makedirs(config.DATA_DIR, exist_ok=True)
     with connect() as con:
         con.execute("PRAGMA journal_mode=WAL")
         con.executescript(SCHEMA)
+        _migrate(con)
+        con.executescript(VIEW)
+        con.execute("CREATE INDEX IF NOT EXISTS idx_plays_ip ON plays(ip)")
 
 
 @contextmanager

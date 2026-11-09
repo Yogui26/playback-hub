@@ -19,7 +19,8 @@ def env(tmp_path_factory):
     emby_db, jf_db = str(tmp / "emby.db"), str(tmp / "jf.db")
     mock_servers.build_db("emby", emby_db, seed=1)
     mock_servers.build_db("jellyfin", jf_db, seed=2)
-    server = uvicorn.Server(uvicorn.Config(mock_servers.create_app(emby_db, jf_db), port=PORT, log_level="error"))
+    mock = mock_servers.create_app(emby_db, jf_db)
+    server = uvicorn.Server(uvicorn.Config(mock, port=PORT, log_level="error"))
     threading.Thread(target=server.run, daemon=True).start()
     while not server.started:
         time.sleep(0.05)
@@ -32,7 +33,7 @@ def env(tmp_path_factory):
     collector.PAGE = 150  # force la pagination
     db.init()
     asyncio.run(collector.sync_all())
-    yield {"emby": emby_db, "jellyfin": jf_db}
+    yield {"emby": emby_db, "jellyfin": jf_db, "mock": mock}
     server.should_exit = True
 
 
@@ -130,3 +131,56 @@ def test_sql_error_is_reported(env):
             await collector._custom_query(client, config.load_servers()[1], "SELECT * FROM TableAbsente")
     with pytest.raises(RuntimeError, match="requête refusée"):
         asyncio.run(run())
+
+
+def test_emby_ips_are_normalized_and_classified(env):
+    from app import stats
+    d = stats.dashboard(0, "emby", "")
+    ips = {i["ip"]: i for i in d["ips"]}
+    # « 192.168.1.20 », « ::ffff:192.168.1.20 » et « 192.168.1.21:8096 » sont nettoyées.
+    assert set(ips) == {"192.168.1.20", "192.168.1.21", "82.64.10.5", "2a01:e0a:1:2::10"}
+    assert ips["192.168.1.20"]["scope"] == "local" and ips["82.64.10.5"]["scope"] == "remote"
+    assert sum(i["seconds"] for i in d["ips"]) == d["totals"]["emby"]
+    assert sum(i["plays"] for i in d["ips"]) == 400
+    assert d["totals"]["ips"] == 4
+    assert {n["name"] for n in d["networks"]} == {"Réseau local", "Distant"}
+    assert sum(n["seconds"] for n in d["networks"]) == d["totals"]["seconds"]
+    assert all(p["ips"] == p["local"] + p["remote"] for p in d["people_ips"])
+    assert all(len(i["people"]) == len({x.lower() for x in i["people"]}) for i in d["ips"])
+
+
+def test_jellyfin_ip_comes_from_active_session(env):
+    from datetime import datetime
+    from app import collector, stats
+    user = mock_servers.USERS["jellyfin"][0][0]
+    dashed = f"{user[:8]}-{user[8:12]}-{user[12:16]}-{user[16:20]}-{user[20:]}"
+    item = "c0ffee00c0ffee00c0ffee00c0ffee00"
+    con = sqlite3.connect(env["jellyfin"])
+    con.execute("INSERT INTO PlaybackActivity VALUES (?,?,?,?,?,?,?,?,?)",
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S.0000000"), dashed, item, "Movie", "Dune",
+                 "DirectPlay", "Jellyfin Web", "Firefox", 600))
+    con.commit()
+    con.close()
+    env["mock"].state.sessions["jellyfin"] = [
+        {"UserId": user, "RemoteEndPoint": "90.12.34.56", "NowPlayingItem": {"Id": item}},
+        {"UserId": user, "RemoteEndPoint": "10.0.0.9"},  # session sans lecture : ignorée
+    ]
+    asyncio.run(collector.poll_sessions())
+    asyncio.run(collector.sync_all())
+    d = stats.dashboard(1, "jellyfin", "")
+    assert d["recent"][0]["ip"] == "90.12.34.56" and d["recent"][0]["ip_scope"] == "remote"
+    assert [i["ip"] for i in d["ips"]] == ["90.12.34.56"]
+
+
+def test_migration_backfills_ips(env):
+    from app import collector, config, db, stats
+    with db.connect() as con:
+        con.execute("DROP VIEW v_plays")
+        con.execute("ALTER TABLE plays DROP COLUMN ip_scope")
+        con.execute("DROP INDEX idx_plays_ip")
+        con.execute("ALTER TABLE plays DROP COLUMN ip")
+    db.init()
+    assert stats.dashboard(0, "emby", "")["totals"]["ips"] == 0
+    asyncio.run(collector.sync_all())
+    assert stats.dashboard(0, "emby", "")["totals"]["ips"] == 4
+    assert not collector._full_resync(config.load_servers()[0])

@@ -59,9 +59,27 @@
   </section>
 
   <section class="card">
+    <h2>Adresses IP <span class="muted small" id="ip-count"></span></h2>
+    <div class="ip-grid">
+      <div class="table-wrap"><table id="ips">
+        <thead><tr><th>Adresse</th><th>Réseau</th><th>Utilisateurs</th><th>Serveur</th><th class="num">Lectures</th><th class="num">Durée</th><th>Dernière lecture</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div>
+        <h2>Local ou distant</h2><div id="l-networks" class="bars"></div>
+        <h2 class="sub">Par utilisateur</h2>
+        <div class="table-wrap"><table id="people-ips">
+          <thead><tr><th>Utilisateur</th><th class="num">Adresses</th><th class="num">dont distantes</th><th class="num">Temps à distance</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>Dernières lectures</h2>
     <div class="table-wrap"><table id="recent">
-      <thead><tr><th>Date</th><th>Serveur</th><th>Utilisateur</th><th>Titre</th><th>Appareil</th><th>Méthode</th><th class="num">Durée</th></tr></thead>
+      <thead><tr><th>Date</th><th>Serveur</th><th>Utilisateur</th><th>Titre</th><th>Appareil</th><th>Adresse IP</th><th>Méthode</th><th class="num">Durée</th></tr></thead>
       <tbody></tbody>
     </table></div>
   </section>

@@ -45,6 +45,8 @@ MIN_PLAY_SECONDS = max(0, int(_env("MIN_PLAY_SECONDS", "0") or 0))
 # Les lignes plus récentes que ce délai sont relues à chaque synchro,
 # car le plugin met à jour la durée pendant la lecture.
 RESYNC_WINDOW_HOURS = 48
+# Fréquence de relevé des sessions actives, pour connaître l'adresse IP des lectures en cours.
+SESSION_POLL_SECONDS = max(15, int(_env("SESSION_POLL_SECONDS", "60") or 60))
 AUTH_USER = _env("AUTH_USER")
 AUTH_PASSWORD = _env("AUTH_PASSWORD")
 VERIFY_TLS = _env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
