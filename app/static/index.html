@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playback Hub</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232a78d6'/><path d='M12 9l12 7-12 7z' fill='white'/></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo" aria-hidden="true"></span><h1>Playback Hub</h1></div>
+  <div id="servers" class="servers"></div>
+  <div class="actions">
+    <button id="btn-users" type="button">Utilisateurs</button>
+    <button id="btn-sync" type="button" class="primary">Synchroniser</button>
+  </div>
+</header>
+
+<main>
+  <section class="filters" aria-label="Filtres">
+    <div class="seg" id="f-days" role="group" aria-label="Période">
+      <button data-v="7">7 j</button><button data-v="30" class="on">30 j</button><button data-v="90">90 j</button><button data-v="365">1 an</button><button data-v="0">Tout</button>
+    </div>
+    <div class="seg" id="f-source" role="group" aria-label="Serveur">
+      <button data-v="all" class="on">Tous</button><button data-v="emby"><i class="dot emby"></i>Emby</button><button data-v="jellyfin"><i class="dot jellyfin"></i>Jellyfin</button>
+    </div>
+    <label class="select">Utilisateur
+      <select id="f-person"><option value="">Tous</option></select>
+    </label>
+    <span id="updated" class="muted"></span>
+  </section>
+
+  <div id="empty" class="notice" hidden></div>
+
+  <section class="kpis" id="kpis"></section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Temps de visionnage</h2>
+      <div class="legend"><span><i class="dot emby"></i>Emby</span><span><i class="dot jellyfin"></i>Jellyfin</span></div>
+    </div>
+    <div class="chart-box"><canvas id="timeline" aria-label="Temps de visionnage par période et par serveur"></canvas></div>
+  </section>
+
+  <section class="grid">
+    <div class="card"><h2>Utilisateurs</h2><div id="l-people" class="bars"></div></div>
+    <div class="card"><h2>Films les plus vus</h2><div id="l-movies" class="bars"></div></div>
+    <div class="card"><h2>Séries les plus vues</h2><div id="l-series" class="bars"></div></div>
+    <div class="card"><h2>Applications</h2><div id="l-clients" class="bars"></div></div>
+    <div class="card"><h2>Appareils</h2><div id="l-devices" class="bars"></div></div>
+    <div class="card"><h2>Méthode de lecture</h2><div id="l-methods" class="bars"></div>
+      <h2 class="sub">Type de média</h2><div id="l-types" class="bars"></div></div>
+  </section>
+
+  <section class="card">
+    <h2>Quand regarde-t-on ? <span class="muted small">temps de visionnage selon l'heure de début</span></h2>
+    <div id="heatmap" class="heatmap"></div>
+  </section>
+
+  <section class="card">
+    <h2>Dernières lectures</h2>
+    <div class="table-wrap"><table id="recent">
+      <thead><tr><th>Date</th><th>Serveur</th><th>Utilisateur</th><th>Titre</th><th>Appareil</th><th>Méthode</th><th class="num">Durée</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+</main>
+
+<dialog id="dlg-users">
+  <form method="dialog" class="dlg-head"><h2>Correspondance des utilisateurs</h2><button aria-label="Fermer">✕</button></form>
+  <p class="muted">Deux comptes portant le même nom sont déjà regroupés. Si une même personne a des noms différents
+    sur Emby et sur Jellyfin, donne-lui le même « nom commun » sur ses deux comptes.</p>
+  <div class="table-wrap"><table id="users">
+    <thead><tr><th>Serveur</th><th>Compte</th><th class="num">Lectures</th><th>Nom commun</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</dialog>
+
+<script src="/static/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

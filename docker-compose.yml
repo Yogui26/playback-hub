@@ -1,0 +1,20 @@
+services:
+  playback-hub:
+    image: ghcr.io/yogui26/playback-hub:latest
+    container_name: playback-hub
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Europe/Paris
+      EMBY_URL: http://192.168.1.10:8096        # adresse de ton serveur Emby
+      EMBY_API_KEY: remplace-moi
+      JELLYFIN_URL: http://192.168.1.10:8097    # adresse de ton serveur Jellyfin
+      JELLYFIN_API_KEY: remplace-moi
+      # SYNC_INTERVAL_MINUTES: 15               # fréquence de synchro
+      # MIN_PLAY_SECONDS: 0                     # ignorer les lectures plus courtes
+      # AUTH_USER: admin                        # protège le dashboard par mot de passe
+      # AUTH_PASSWORD: change-moi
+      # VERIFY_TLS: "false"                     # si tes serveurs ont un certificat auto-signé
+    volumes:
+      - ./data:/data
