@@ -7,7 +7,7 @@ Un dashboard web unique pour les statistiques de lecture d'**Emby** et de **Jell
 - Classement des utilisateurs, des films et des séries
 - Applications, appareils, méthode de lecture (Direct Play, Direct Stream, transcodage)
 - Carte des heures de visionnage
-- Historique des lectures avec recherche (inclure / exclure), tri par colonne et pagination
+- Historique des lectures avec menus de colonne façon Excel (tri, valeurs à cocher, recherche) et pagination
 - Adresses IP : lectures et durée par adresse, part du réseau local et de l'accès distant, adresses par utilisateur
 - Filtres par période, par serveur et par utilisateur
 - Regroupement des comptes d'une même personne entre les deux serveurs

@@ -195,30 +195,39 @@ def test_plays_filters_sort_and_pagination(env):
     # Pagination : les pages se suivent sans doublon ni trou.
     seen = []
     for page in range(1, 4):
-        seen += [(r["date_created"], r["server"], r["item_name"], r["person"]) for r in
-                 stats.plays(0, "emby", "", page=page, per_page=150)["rows"]]
+        seen += stats.plays(0, "emby", "", page=page, per_page=150)["rows"]
     assert len(seen) == 400
     assert stats.plays(0, "emby", "", page=99, per_page=150)["page"] == 3
 
-    # Inclure : tous les termes, sans tenir compte des accents ni de la casse.
-    inc = stats.plays(0, "emby", "", include="AMELIE, yonel", per_page=500)
-    assert inc["total"] > 0
-    assert all("Amélie" in r["item_name"] and r["person"].lower() == "yonel" for r in inc["rows"])
+    # Liste de valeurs d'une colonne : les comptes couvrent toutes les lignes.
+    titles = stats.column_values(0, "emby", "", {}, "title")
+    assert sum(v["count"] for v in titles) == 400
+    assert {v["label"] for v in titles} == set(mock_servers.MOVIES) | set(mock_servers.SERIES)
 
-    # Exclure : aucun des termes.
-    exc = stats.plays(0, "emby", "", exclude="dune, transcodage", per_page=500)
-    assert 0 < exc["total"] < 400
-    assert all(r["item_name"] != "Dune" and r["method"] != "Transcodage" for r in exc["rows"])
-    only = stats.plays(0, "emby", "", include="dune", per_page=500)["total"]
-    without = stats.plays(0, "emby", "", exclude="dune", per_page=500)["total"]
-    assert only + without == 400
+    # Inclure (valeurs cochées) et exclure (valeurs décochées) se complètent.
+    inc = stats.plays(0, "emby", "", {"title": {"mode": "in", "values": ["dune", "dark"]}}, per_page=500)
+    out = stats.plays(0, "emby", "", {"title": {"mode": "out", "values": ["dune", "dark"]}}, per_page=500)
+    assert inc["total"] > 0 and inc["total"] + out["total"] == 400
+    assert all(r["item_name"] == "Dune" or r["item_name"].startswith("Dark - ") for r in inc["rows"])
+    assert not any(r["item_name"] == "Dune" or r["item_name"].startswith("Dark - ") for r in out["rows"])
+    assert stats.plays(0, "emby", "", {"title": {"mode": "in", "values": []}})["total"] == 0
 
-    # Listes déroulantes.
-    movies = stats.plays(0, "emby", "", item_type="Movie", method="Direct Play", scope="remote", per_page=500)
-    assert movies["total"] > 0
-    assert all(r["item_type"] == "Movie" and r["method"] == "Direct Play" and r["ip_scope"] == "remote"
-               for r in movies["rows"])
-    assert movies["seconds"] == sum(r["duration"] for r in movies["rows"])
+    # Plusieurs colonnes se combinent ; la liste d'une colonne tient compte des autres filtres.
+    filters = {"person": {"mode": "in", "values": ["yonel"]}, "type": {"mode": "in", "values": ["movie"]},
+               "scope": {"mode": "in", "values": ["remote"]}, "duration": {"mode": "out", "values": ["1"]}}
+    combo = stats.plays(0, "emby", "", filters, per_page=500)
+    assert combo["total"] > 0
+    assert all(r["person"] == "Yonel" and r["item_type"] == "Movie" and r["ip_scope"] == "remote"
+               and r["duration"] >= 300 for r in combo["rows"])
+    assert combo["seconds"] == sum(r["duration"] for r in combo["rows"])
+    ips = stats.column_values(0, "emby", "", filters, "ip")
+    assert {v["value"] for v in ips} <= {"82.64.10.5", "2a01:e0a:1:2::10"}
+    assert sum(v["count"] for v in ips) == combo["total"]
+    # ... mais pas de son propre filtre, pour pouvoir recocher une valeur.
+    assert len(stats.column_values(0, "emby", "", filters, "person")) == 3
+
+    # Valeurs vides (Jellyfin sans adresse) proposées comme dans Excel.
+    assert "" in {v["value"] for v in stats.column_values(0, "all", "", {}, "ip")}
 
     # Tri.
     asc = [r["duration"] for r in stats.plays(0, "emby", "", sort="duration", order="asc", per_page=500)["rows"]]
@@ -226,3 +235,20 @@ def test_plays_filters_sort_and_pagination(env):
     desc = [r["date_created"] for r in stats.plays(0, "emby", "", per_page=500)["rows"]]
     assert desc == sorted(desc, reverse=True)
     assert stats.plays(0, "emby", "", sort="n'importe quoi; DROP TABLE plays")["total"] == 400
+    assert stats.plays(0, "emby", "", {"inconnue; DROP": {"mode": "in", "values": ["x"]}})["total"] == 400
+
+
+def test_http_api_and_cache_busting(env):
+    from fastapi.testclient import TestClient
+    from app import main
+    with TestClient(main.app) as client:
+        html = client.get("/")
+        assert f"/static/app.js?v={main.ASSETS}" in html.text and f"/static/style.css?v={main.ASSETS}" in html.text
+        assert html.headers["cache-control"] == "no-store"
+        assert client.get(f"/static/app.js?v={main.ASSETS}").headers["cache-control"] == "no-cache"
+        r = client.post("/api/plays", json={"days": 0, "source": "emby", "per_page": 10,
+                                            "filters": {"method": {"mode": "in", "values": ["Transcodage"]}}})
+        assert r.status_code == 200 and len(r.json()["rows"]) == 10
+        assert all(x["method"] == "Transcodage" for x in r.json()["rows"])
+        v = client.post("/api/plays/values", json={"days": 0, "source": "emby", "column": "method"})
+        assert {x["value"] for x in v.json()} == {"Direct Play", "Direct Stream", "Transcodage"}

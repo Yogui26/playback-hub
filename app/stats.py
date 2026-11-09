@@ -142,41 +142,49 @@ def dashboard(days: int, source: str, person: str) -> dict:
         }
 
 
-_SORTS = {
-    "date": "date_created", "server": "server", "person": "fold(person)", "title": "fold(item_name)",
-    "device": "fold(device)", "ip": "ip", "method": "method", "duration": "duration",
+_DURATION = ("CASE WHEN duration < 300 THEN '1' WHEN duration < 1800 THEN '2' WHEN duration < 3600 THEN '3' "
+             "WHEN duration < 7200 THEN '4' ELSE '5' END")
+DURATION_LABELS = {"1": "Moins de 5 min", "2": "5 à 30 min", "3": "30 min à 1 h", "4": "1 à 2 h", "5": "Plus de 2 h"}
+# Colonnes du tableau : (clé de filtre, libellé affiché, expression de tri)
+_COLUMNS = {
+    "date":     ("substr(date_created, 1, 10)", "substr(date_created, 1, 10)", "date_created"),
+    "server":   ("server", "server", "server"),
+    "person":   ("lower(person)", "person", "fold(person)"),
+    "type":     ("lower(COALESCE(item_type, ''))", "item_type", "item_type"),
+    "title":    ("lower(COALESCE(series, item_name, ''))", "COALESCE(series, item_name)", "fold(item_name)"),
+    "device":   ("COALESCE(device, '')", "device", "fold(device)"),
+    "client":   ("COALESCE(client, '')", "client", "fold(client)"),
+    "ip":       ("COALESCE(ip, '')", "ip", "ip"),
+    "scope":    ("COALESCE(ip_scope, '')", "ip_scope", "ip_scope"),
+    "method":   ("COALESCE(method, '')", "method", "method"),
+    "duration": (_DURATION, _DURATION, "duration"),
 }
-_HAYSTACK = ("fold(person || ' ' || COALESCE(item_name, '') || ' ' || COALESCE(device, '') || ' ' || "
-             "COALESCE(client, '') || ' ' || COALESCE(ip, '') || ' ' || COALESCE(method, '') || ' ' || server)")
+MAX_VALUES = 3000
 
 
-def _terms(text: str) -> list[str]:
-    return [t for t in (db.fold(x).strip() for x in (text or "").split(",")) if t]
-
-
-def plays(days: int, source: str, person: str, include: str = "", exclude: str = "", item_type: str = "",
-          method: str = "", scope: str = "", sort: str = "date", order: str = "desc",
-          page: int = 1, per_page: int = 25) -> dict:
-    """Historique paginé : filtres globaux + recherche, exclusion et tri propres au tableau."""
+def _table_where(days, source, person, filters, skip=None) -> tuple[str, list]:
+    """Filtres globaux + filtres de colonnes. Chaque filtre : {"mode": "in"|"out", "values": [...]}."""
     where, params = _where(days, source, person)
-    for term in _terms(include):           # tous les termes doivent être présents
-        where += f" AND instr({_HAYSTACK}, ?) > 0"
-        params.append(term)
-    for term in _terms(exclude):           # aucun des termes ne doit être présent
-        where += f" AND instr({_HAYSTACK}, ?) = 0"
-        params.append(term)
-    if item_type:
-        where += " AND lower(item_type) = lower(?)"
-        params.append(item_type)
-    if method:
-        where += " AND method = ?"
-        params.append(method)
-    if scope in ("local", "remote"):
-        where += " AND ip_scope = ?"
-        params.append(scope)
-    elif scope == "unknown":
-        where += " AND ip IS NULL"
-    column = _SORTS.get(sort, "date_created")
+    for column, flt in (filters or {}).items():
+        if column == skip or column not in _COLUMNS or not isinstance(flt, dict):
+            continue
+        values = [str(v) for v in (flt.get("values") or [])][:MAX_VALUES]
+        keep = flt.get("mode") != "out"
+        if not values:
+            if keep:
+                where += " AND 0"          # rien de coché : aucune ligne
+            continue
+        marks = ",".join("?" * len(values))
+        where += f" AND {_COLUMNS[column][0]} {'IN' if keep else 'NOT IN'} ({marks})"
+        params += values
+    return where, params
+
+
+def plays(days: int, source: str, person: str, filters: dict | None = None, sort: str = "date",
+          order: str = "desc", page: int = 1, per_page: int = 25) -> dict:
+    """Historique paginé, filtré et trié."""
+    where, params = _table_where(days, source, person, filters)
+    column = _COLUMNS.get(sort, _COLUMNS["date"])[2]
     direction = "ASC" if order == "asc" else "DESC"
     per_page = max(1, min(int(per_page), 500))
     with db.connect() as con:
@@ -191,6 +199,24 @@ def plays(days: int, source: str, person: str, include: str = "", exclude: str =
     return {"total": total, "seconds": seconds, "page": page, "pages": pages, "per_page": per_page, "rows": rows}
 
 
+def column_values(days: int, source: str, person: str, filters: dict | None, column: str) -> list[dict]:
+    """Valeurs distinctes d'une colonne, compte tenu des filtres des autres colonnes (comme dans Excel)."""
+    if column not in _COLUMNS:
+        return []
+    key, label, _ = _COLUMNS[column]
+    where, params = _table_where(days, source, person, filters, skip=column)
+    with db.connect() as con:
+        rows = con.execute(
+            f"SELECT {key} AS value, MIN({label}) AS label, COUNT(*) AS count FROM v_plays WHERE {where} "
+            f"GROUP BY value ORDER BY value LIMIT {MAX_VALUES}", params).fetchall()
+    out = []
+    for r in rows:
+        value = r["value"] or ""
+        label = DURATION_LABELS.get(value, value) if column == "duration" else (r["label"] or "")
+        out.append({"value": value, "label": label, "count": r["count"]})
+    return out
+
+
 def status() -> dict:
     with db.connect() as con:
         state = {r["server"]: dict(r) for r in con.execute("SELECT * FROM sync_state")}
@@ -202,7 +228,7 @@ def status() -> dict:
             "key": s.key, "label": s.label, "url": s.url, "rows": counts.get(s.key, 0),
             "last_ok": st.get("last_ok"), "last_try": st.get("last_try"), "last_error": st.get("last_error"),
         })
-    return {"servers": servers, "interval_minutes": config.SYNC_INTERVAL_MINUTES}
+    return {"servers": servers, "interval_minutes": config.SYNC_INTERVAL_MINUTES, "version": config.VERSION}
 
 
 def list_users() -> list[dict]:

@@ -11,6 +11,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY entrypoint.sh /entrypoint.sh
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
 
 VOLUME /data
 EXPOSE 8080

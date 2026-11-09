@@ -122,59 +122,156 @@ function renderHeatmap(grid) {
   });
   $("heatmap").innerHTML = html;
 }
-/* ---------- tableau des lectures : filtres, tri, pages ---------- */
-const table = { include: "", exclude: "", type: "", method: "", scope: "", sort: "date", order: "desc", page: 1, per_page: 25 };
+/* ---------- tableau des lectures : menus de colonne façon Excel, tri, pages ---------- */
+const table = { filters: {}, sort: "date", order: "desc", page: 1, per_page: 25 };
+const COLS = {
+  date: { asc: "Du plus ancien au plus récent", desc: "Du plus récent au plus ancien", label: (v) => new Date(v + "T00:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" }), keep: "desc" },
+  server: { label: (v) => LABEL[v] || v },
+  person: {}, title: {}, device: {}, client: {}, ip: {}, method: {},
+  type: { label: (v) => TYPES[v] || v },
+  scope: { label: (v) => ({ local: "Local", remote: "Distant" }[v] || v) },
+  duration: { asc: "De la plus courte à la plus longue", desc: "De la plus longue à la plus courte", keep: "asc" },
+};
+const EMPTY = "(Vides)";
 let playsRequest = 0;
+const postJson = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const tableQuery = (extra) => ({ days: state.days, source: state.source, person: state.person, ...table, ...extra });
+const scopeText = (scope) => scope === "remote" ? '<span class="badge remote">Distant</span>'
+  : scope === "local" ? '<span class="badge">Local</span>' : '<span class="muted">—</span>';
+
 function renderPlays(d) {
   table.page = d.page;
+  $("p-error").hidden = true;
   $("recent").querySelector("tbody").innerHTML = d.rows.map((r) => `<tr>
     <td>${fmtDate(r.date_created)}</td>
     <td><i class="dot ${esc(r.server)}"></i>${esc(LABEL[r.server] || r.server)}</td>
-    <td>${esc(r.person)}</td><td class="title">${esc(r.item_name)}</td>
-    <td>${esc(r.device)} <span class="muted">· ${esc(r.client)}</span></td>
-    <td class="ip">${r.ip ? esc(r.ip) : '<span class="muted">—</span>'}</td>
+    <td>${esc(r.person)}</td><td>${esc(TYPES[(r.item_type || "").toLowerCase()] || r.item_type)}</td>
+    <td class="title">${esc(r.item_name)}</td><td>${esc(r.device)}</td><td>${esc(r.client)}</td>
+    <td class="ip">${r.ip ? esc(r.ip) : '<span class="muted">—</span>'}</td><td>${scopeText(r.ip_scope)}</td>
     <td>${esc(r.method)}</td><td class="num">${dur(r.duration)}</td></tr>`).join("")
-    || '<tr><td colspan="8" class="none">Aucune lecture ne correspond à ces filtres.</td></tr>';
-  $("plays-count").textContent = d.total
-    ? `${nf.format(d.total)} lecture${d.total > 1 ? "s" : ""} · ${dur(d.seconds)}` : "";
+    || '<tr><td colspan="11" class="none">Aucune lecture ne correspond à ces filtres.</td></tr>';
+  $("plays-count").textContent = `${nf.format(d.total)} lecture${d.total > 1 ? "s" : ""} · ${dur(d.seconds)}`;
   const from = d.total ? (d.page - 1) * d.per_page + 1 : 0;
-  const to = Math.min(d.page * d.per_page, d.total);
-  $("p-page").textContent = `${nf.format(from)}–${nf.format(to)} sur ${nf.format(d.total)} · page ${d.page} / ${d.pages}`;
+  $("p-page").textContent = `${nf.format(from)}–${nf.format(Math.min(d.page * d.per_page, d.total))} sur ${nf.format(d.total)} · page ${d.page} / ${d.pages}`;
   $("p-first").disabled = $("p-prev").disabled = d.page <= 1;
   $("p-last").disabled = $("p-next").disabled = d.page >= d.pages;
   $("p-last").dataset.page = d.pages;
-  document.querySelectorAll("#recent th[data-sort]").forEach((th) => {
-    if (th.dataset.sort === table.sort) th.setAttribute("aria-sort", table.order === "asc" ? "ascending" : "descending");
-    else th.removeAttribute("aria-sort");
+  const active = Object.keys(table.filters);
+  document.querySelectorAll("#recent button.col").forEach((b) => {
+    b.classList.toggle("filtered", active.includes(b.dataset.col));
+    if (b.dataset.col === table.sort) b.dataset.order = table.order; else delete b.dataset.order;
   });
+  $("p-reset").hidden = !active.length;
+  $("p-active").textContent = active.length
+    ? `${active.length} filtre${active.length > 1 ? "s" : ""} actif${active.length > 1 ? "s" : ""}`
+    : "Clique sur un en-tête de colonne pour trier ou filtrer.";
 }
 async function loadPlays() {
   const id = ++playsRequest;
-  const q = new URLSearchParams({ days: state.days, source: state.source, person: state.person, ...table });
-  const d = await api(`/api/plays?${q}`);
-  if (id === playsRequest) renderPlays(d);  // ignore les réponses arrivées dans le désordre
+  try {
+    const d = await postJson("/api/plays", tableQuery());
+    if (id === playsRequest) renderPlays(d);  // ignore les réponses arrivées dans le désordre
+  } catch (err) {
+    $("p-error").hidden = false;
+    $("p-error").textContent = `Impossible de charger les lectures : ${err.message}`;
+  }
 }
-function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
-const refreshPlays = () => { table.page = 1; loadPlays().catch(() => {}); };
-const typed = debounce(refreshPlays, 250);
-[["p-include", "include"], ["p-exclude", "exclude"]].forEach(([id, key]) =>
-  $(id).addEventListener("input", (e) => { table[key] = e.target.value; typed(); }));
-[["p-type", "type"], ["p-method", "method"], ["p-scope", "scope"]].forEach(([id, key]) =>
-  $(id).addEventListener("change", (e) => { table[key] = e.target.value; refreshPlays(); }));
-$("p-size").addEventListener("change", (e) => { table.per_page = Number(e.target.value); refreshPlays(); });
-$("p-reset").addEventListener("click", () => {
-  Object.assign(table, { include: "", exclude: "", type: "", method: "", scope: "", sort: "date", order: "desc" });
-  ["p-include", "p-exclude", "p-type", "p-method", "p-scope"].forEach((id) => { $(id).value = ""; });
+const refreshPlays = () => { table.page = 1; return loadPlays(); };
+
+/* --- menu de colonne --- */
+const menu = { col: null, values: [], checked: new Set(), button: null };
+function closeMenu() {
+  $("colmenu").hidden = true;
+  if (menu.button) menu.button.classList.remove("open");
+  menu.col = null;
+}
+function visibleValues() {
+  const q = $("cm-search").value.trim().toLowerCase();
+  return q ? menu.values.filter((v) => v.text.toLowerCase().includes(q)) : menu.values;
+}
+function drawValues() {
+  const vis = visibleValues();
+  const all = vis.length > 0 && vis.every((v) => menu.checked.has(v.value));
+  $("cm-values").innerHTML = (vis.length ? `<label class="all"><input type="checkbox" data-all ${all ? "checked" : ""}><span class="txt">(Sélectionner tout)</span></label>` : '<div class="none">Aucune valeur.</div>')
+    + vis.map((v) => `<label title="${esc(v.text)}"><input type="checkbox" data-i="${v.i}" ${menu.checked.has(v.value) ? "checked" : ""}><span class="txt">${esc(v.text)}</span><span class="n">${nf.format(v.count)}</span></label>`).join("");
+  const box = $("cm-values").querySelector("[data-all]");
+  if (box) box.indeterminate = !all && vis.some((v) => menu.checked.has(v.value));
+  $("cm-ok").disabled = !vis.some((v) => menu.checked.has(v.value));
+}
+async function openMenu(button) {
+  const col = button.dataset.col, def = COLS[col];
+  if (menu.col === col) { closeMenu(); return; }
+  closeMenu();
+  menu.col = col; menu.button = button;
+  button.classList.add("open");
+  const el = $("colmenu");
+  $("cm-asc").textContent = def.asc || "Trier de A à Z";
+  $("cm-desc").textContent = def.desc || "Trier de Z à A";
+  el.querySelectorAll("[data-order]").forEach((b) => b.classList.toggle("on", table.sort === col && table.order === b.dataset.order));
+  $("cm-clear").disabled = !table.filters[col];
+  $("cm-search").value = "";
+  $("cm-values").innerHTML = '<div class="none">Chargement…</div>';
+  $("cm-ok").disabled = true;
+  el.hidden = false;
+  const r = button.getBoundingClientRect();
+  el.style.top = `${r.bottom + window.scrollY + 4}px`;
+  el.style.left = `${Math.max(8, Math.min(r.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - 280))}px`;
+  let raw;
+  try { raw = await postJson("/api/plays/values", tableQuery({ column: col })); }
+  catch (err) { $("cm-values").innerHTML = `<div class="none">Erreur : ${esc(err.message)}</div>`; return; }
+  if (menu.col !== col) return;
+  menu.values = raw.map((v) => ({ value: v.value, count: v.count, text: v.value === "" ? EMPTY : (def.label ? def.label(v.value) : v.label || v.value) }));
+  if (def.keep === "desc") menu.values.reverse();
+  else if (!def.keep) menu.values.sort((a, b) => (a.value === "") - (b.value === "") || a.text.localeCompare(b.text, "fr", { sensitivity: "base", numeric: true }));
+  menu.values.forEach((v, i) => { v.i = i; });
+  const f = table.filters[col];
+  menu.checked = new Set(menu.values.filter((v) => !f || (f.mode === "in") === f.values.includes(v.value)).map((v) => v.value));
+  drawValues();
+  $("cm-search").focus();
+}
+function applyMenu() {
+  const col = menu.col;
+  if (!col) return;
+  // Avec une recherche en cours, seules les valeurs affichées et cochées sont gardées, comme dans Excel.
+  const searching = $("cm-search").value.trim() !== "";
+  const kept = (searching ? visibleValues() : menu.values).filter((v) => menu.checked.has(v.value)).map((v) => v.value);
+  if (!kept.length) return;
+  const dropped = menu.values.filter((v) => !kept.includes(v.value)).map((v) => v.value);
+  if (!dropped.length) delete table.filters[col];
+  else table.filters[col] = kept.length <= dropped.length ? { mode: "in", values: kept } : { mode: "out", values: dropped };
+  closeMenu();
   refreshPlays();
-});
+}
 $("recent").querySelector("thead").addEventListener("click", (e) => {
-  const th = e.target.closest("th[data-sort]");
-  if (!th) return;
-  if (table.sort === th.dataset.sort) table.order = table.order === "asc" ? "desc" : "asc";
-  else { table.sort = th.dataset.sort; table.order = ["date", "duration"].includes(table.sort) ? "desc" : "asc"; }
-  refreshPlays();
+  const b = e.target.closest("button.col");
+  if (b) { e.stopPropagation(); openMenu(b); }
 });
-const goto = (page) => { table.page = Math.max(1, page); loadPlays().catch(() => {}); };
+$("colmenu").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const sortBtn = e.target.closest("[data-order]");
+  if (sortBtn && sortBtn.classList.contains("item")) {
+    table.sort = menu.col; table.order = sortBtn.dataset.order;
+    closeMenu(); refreshPlays();
+  }
+});
+$("cm-values").addEventListener("change", (e) => {
+  const box = e.target;
+  if (box.dataset.all !== undefined) visibleValues().forEach((v) => box.checked ? menu.checked.add(v.value) : menu.checked.delete(v.value));
+  else { const v = menu.values[Number(box.dataset.i)]; box.checked ? menu.checked.add(v.value) : menu.checked.delete(v.value); }
+  drawValues();
+});
+$("cm-search").addEventListener("input", drawValues);
+$("cm-search").addEventListener("keydown", (e) => { if (e.key === "Enter") applyMenu(); });
+$("cm-ok").addEventListener("click", applyMenu);
+$("cm-cancel").addEventListener("click", closeMenu);
+$("cm-clear").addEventListener("click", () => { delete table.filters[menu.col]; closeMenu(); refreshPlays(); });
+document.addEventListener("click", () => { if (menu.col) closeMenu(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && menu.col) closeMenu(); });
+window.addEventListener("resize", closeMenu);
+
+$("p-reset").addEventListener("click", () => { table.filters = {}; refreshPlays(); });
+$("p-size").addEventListener("change", (e) => { table.per_page = Number(e.target.value); refreshPlays(); });
+const goto = (page) => { table.page = Math.max(1, page); loadPlays(); };
 $("p-first").addEventListener("click", () => goto(1));
 $("p-prev").addEventListener("click", () => goto(table.page - 1));
 $("p-next").addEventListener("click", () => goto(table.page + 1));

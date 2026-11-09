@@ -50,3 +50,4 @@ SESSION_POLL_SECONDS = max(15, int(_env("SESSION_POLL_SECONDS", "60") or 60))
 AUTH_USER = _env("AUTH_USER")
 AUTH_PASSWORD = _env("AUTH_PASSWORD")
 VERIFY_TLS = _env("VERIFY_TLS", "true").lower() not in ("0", "false", "no")
+VERSION = (_env("APP_VERSION") or "dev")[:7]

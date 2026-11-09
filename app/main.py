@@ -1,13 +1,14 @@
 """Playback Hub : dashboard unifié des plugins Playback Reporting d'Emby et de Jellyfin."""
 import asyncio
 import base64
+import hashlib
 import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -51,7 +52,12 @@ async def basic_auth(request: Request, call_next):
                 ok = False
         if not ok:
             return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="Playback Hub"'})
-    return await call_next(request)
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    elif request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/healthz")
@@ -64,12 +70,26 @@ def api_dashboard(days: int = 30, source: str = "all", person: str = ""):
     return stats.dashboard(max(0, min(days, 3660)), source, person)
 
 
-@app.get("/api/plays")
-def api_plays(days: int = 30, source: str = "all", person: str = "", include: str = "", exclude: str = "",
-              type: str = "", method: str = "", scope: str = "", sort: str = "date", order: str = "desc",
-              page: int = 1, per_page: int = 25):
-    return stats.plays(max(0, min(days, 3660)), source, person, include, exclude, type, method, scope,
-                       sort, order, page, per_page)
+class PlaysBody(BaseModel):
+    days: int = 30
+    source: str = "all"
+    person: str = ""
+    filters: dict = {}
+    sort: str = "date"
+    order: str = "desc"
+    page: int = 1
+    per_page: int = 25
+    column: str = ""
+
+
+@app.post("/api/plays")
+def api_plays(b: PlaysBody):
+    return stats.plays(max(0, min(b.days, 3660)), b.source, b.person, b.filters, b.sort, b.order, b.page, b.per_page)
+
+
+@app.post("/api/plays/values")
+def api_plays_values(b: PlaysBody):
+    return stats.column_values(max(0, min(b.days, 3660)), b.source, b.person, b.filters, b.column)
 
 
 @app.get("/api/status")
@@ -101,9 +121,26 @@ def api_alias(body: AliasBody):
     return {"ok": True}
 
 
+def _asset_version() -> str:
+    """Empreinte des fichiers statiques : change à chaque nouvelle version de l'app."""
+    digest = hashlib.sha256()
+    for name in sorted(os.listdir(STATIC)):
+        with open(os.path.join(STATIC, name), "rb") as f:
+            digest.update(f.read())
+    return digest.hexdigest()[:12]
+
+
+ASSETS = _asset_version()
+with open(os.path.join(STATIC, "index.html"), encoding="utf-8") as _f:
+    # Les adresses des scripts et styles portent l'empreinte : ni le navigateur ni un reverse proxy
+    # ne peuvent resservir une ancienne version après une mise à jour.
+    INDEX_HTML = (_f.read().replace('.css"', f'.css?v={ASSETS}"').replace('.js"', f'.js?v={ASSETS}"')
+                  .replace("{{VERSION}}", config.VERSION))
+
+
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(STATIC, "index.html"), headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(INDEX_HTML, headers={"Cache-Control": "no-store"})
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
