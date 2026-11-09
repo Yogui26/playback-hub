@@ -60,8 +60,11 @@ async def _custom_query(client: httpx.AsyncClient, server: Server, sql: str) -> 
     # Le plugin écrit « colums » (sic) ; on accepte aussi l'orthographe correcte.
     columns = data.get("colums") or data.get("columns") or []
     rows = data.get("results") or []
-    if not columns and data.get("message"):
-        raise RuntimeError(f"requête refusée par le plugin : {data['message']}")
+    message = str(data.get("message") or "")
+    # Sans résultat, le plugin renvoie un message d'information (« Query executed, no data
+    # returned ») et aucune colonne : ce n'est pas une erreur, la table est simplement vide.
+    if not rows and "error" in message.lower():
+        raise RuntimeError(f"requête refusée par le plugin : {message.replace('</br>', ' ')}")
     keys = [str(c).lower() for c in columns]
     return [dict(zip(keys, row)) for row in rows]
 

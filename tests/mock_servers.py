@@ -77,6 +77,9 @@ def create_app(emby_db: str, jf_db: str) -> FastAPI:
             columns = [c[0] for c in cur.description]
             # Comme le vrai plugin : toutes les valeurs sont renvoyées en chaînes.
             results = [[None if v is None else str(v) for v in row] for row in cur.fetchall()]
+            if not results:  # comportement du vrai plugin quand il n'y a aucune ligne
+                return {"colums": [], "results": [],
+                        "message": "Query executed, no data returned.</br>Number of rows effected : 0"}
             return {"colums": columns, "results": results, "message": ""}
         except sqlite3.Error as e:
             return {"colums": [], "results": [], "message": f"Error Running Query</br>{e}"}

@@ -108,3 +108,25 @@ def test_bad_key_is_reported(env):
     emby = next(s for s in stats.status()["servers"] if s["key"] == "emby")
     assert "clé API refusée" in emby["last_error"]
     assert emby["last_ok"] is not None  # la dernière synchro réussie reste connue
+
+
+def test_empty_table_is_not_an_error(env):
+    from app import collector, stats
+    con = sqlite3.connect(env["jellyfin"])
+    con.execute("DELETE FROM PlaybackActivity")
+    con.commit()
+    con.close()
+    asyncio.run(collector.sync_all())
+    jf = next(s for s in stats.status()["servers"] if s["key"] == "jellyfin")
+    assert jf["last_error"] is None
+
+
+def test_sql_error_is_reported(env):
+    from app import collector, config
+    import httpx
+
+    async def run():
+        async with httpx.AsyncClient() as client:
+            await collector._custom_query(client, config.load_servers()[1], "SELECT * FROM TableAbsente")
+    with pytest.raises(RuntimeError, match="requête refusée"):
+        asyncio.run(run())
