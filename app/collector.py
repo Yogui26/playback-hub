@@ -245,8 +245,13 @@ async def sync_server(server: Server) -> int:
 
 
 async def sync_all() -> None:
+    from . import live  # import tardif : live dépend de ce module
     async with _lock:
         await asyncio.gather(*(sync_server(s) for s in config.load_servers()))
+        try:
+            await live.sync_downloads_all()
+        except Exception:
+            log.exception("erreur inattendue pendant la lecture des téléchargements")
 
 
 async def run_forever() -> None:

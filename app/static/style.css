@@ -180,3 +180,23 @@ button.col[data-order] { color: var(--text); }
 .colmenu .values .all { font-weight: 600; }
 .colmenu .foot-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .foot { text-align: center; font-size: 12px; padding: 0 0 24px; }
+
+.live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.live-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: grid; gap: 6px; min-width: 0; }
+.live-card.paused { opacity: .75; }
+.live-top { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.live-top b { font-weight: 600; }
+.live-top .state { margin-left: auto; }
+.live-title { font-size: 15px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-sub { color: var(--text-2); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: 1.45em; }
+.progress { height: 6px; border-radius: 3px; background: var(--cell-empty); overflow: hidden; }
+.progress i { display: block; height: 100%; border-radius: 3px; }
+.live-time { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.live-meta { font-size: 12px; color: var(--text-2); display: grid; gap: 2px; }
+.live-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-scroll { max-height: 420px; overflow-y: auto; }
+.dl-scroll thead th { position: sticky; top: 0; background: var(--surface); }
+.diag { margin-top: 14px; font-size: 12.5px; color: var(--text-2); }
+.diag summary { cursor: pointer; color: var(--muted); }
+.diag p { margin: 8px 0 0; }
+.diag code { font-size: 12px; }

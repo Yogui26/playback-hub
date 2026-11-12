@@ -3,6 +3,8 @@
 Un dashboard web unique pour les statistiques de lecture d'**Emby** et de **Jellyfin**, à partir du plugin
 **Playback Reporting** installé sur chacun des deux serveurs.
 
+- Lectures en cours sur les deux serveurs : progression, appareil, méthode de lecture, débit, adresse IP
+- Téléchargements des utilisateurs : qui a téléchargé quoi, quand, et quel volume
 - Temps de visionnage par jour ou par mois, avec la part de chaque serveur
 - Classement des utilisateurs, des films et des séries
 - Applications, appareils, méthode de lecture (Direct Play, Direct Stream, transcodage)
@@ -81,6 +83,12 @@ Le conteneur prépare lui-même le dossier `./data`, puis tourne sans privilège
 - Adresses IP : Emby les enregistre dans son plugin, donc tout l'historique est couvert. Le plugin de Jellyfin
   ne les enregistre pas : Playback Hub relève les sessions actives toutes les minutes et rattache l'adresse à
   la lecture correspondante. Seules les lectures faites pendant que le conteneur tourne ont donc une adresse.
+- Lectures en cours : les sessions actives des serveurs sont interrogées en direct, toutes les 10 secondes
+  tant que la page est ouverte.
+- Téléchargements : ils viennent du journal d'activité de chaque serveur (entrées dont le type contient
+  « download »), complété sur Emby par la liste des téléchargements hors ligne. L'historique remonte aussi loin
+  que le journal du serveur ; il est ensuite conservé par Playback Hub. Le volet « D'où viennent ces données ? »
+  de la section liste les types d'activité rencontrés sur chaque serveur.
 - Films et séries sont rapprochés entre les deux serveurs par leur titre.
 
 ## Limites connues

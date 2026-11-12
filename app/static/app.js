@@ -41,17 +41,83 @@ async function api(path, options) {
 function splitTitle(row) {
   return `Emby : ${dur(row.emby)} · Jellyfin : ${dur(row.jellyfin)} · ${nf.format(row.plays)} lecture${row.plays > 1 ? "s" : ""}`;
 }
-function barList(id, rows) {
+function barList(id, rows, opt = {}) {
+  const value = opt.value || "seconds", fmt = opt.fmt || dur, title = opt.title || splitTitle;
   const el = $(id);
   if (!rows.length) { el.innerHTML = '<div class="none">Aucune donnée sur cette période.</div>'; return; }
-  const max = Math.max(...rows.map((r) => r.seconds), 1);
+  const max = Math.max(...rows.map((r) => r[value]), 1);
   el.innerHTML = rows.map((r) => {
     const seg = (k) => r[k] > 0 ? `<i class="seg-${k}" style="width:${(r[k] / max) * 100}%"></i>` : "";
-    return `<div class="bar-row" title="${esc(splitTitle(r))}">
-      <span class="name">${esc(r.name)}</span><span class="val">${dur(r.seconds)}</span>
+    return `<div class="bar-row" title="${esc(title(r))}">
+      <span class="name">${esc(r.name)}</span><span class="val">${fmt(r[value])}</span>
       <span class="track">${seg("emby")}${seg("jellyfin")}</span></div>`;
   }).join("");
 }
+
+/* ---------- lectures en cours ---------- */
+function clock(seconds) {
+  const s = Math.max(0, Math.round(seconds || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+}
+function renderLive(d) {
+  const n = d.sessions.length;
+  const errors = d.errors.length ? ` · injoignable : ${d.errors.join(" ; ")}` : "";
+  $("live-count").textContent = (n ? `${n} lecture${n > 1 ? "s" : ""}` : "") + errors;
+  $("live-list").innerHTML = d.sessions.map((x) => {
+    const pct = x.runtime ? Math.min(100, (x.position / x.runtime) * 100) : 0;
+    const quality = [x.method, x.resolution, x.bitrate ? `${(x.bitrate / 1e6).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mb/s` : ""].filter(Boolean).join(" · ");
+    return `<div class="live-card ${x.paused ? "paused" : ""}">
+      <div class="live-top"><i class="dot ${esc(x.server)}"></i><b>${esc(x.person)}</b><span class="muted">${esc(LABEL[x.server] || x.server)}</span>
+        <span class="badge state ${x.paused ? "" : "remote"}">${x.paused ? "En pause" : "Lecture"}</span></div>
+      <div class="live-title" title="${esc(x.title)}">${esc(x.title)}</div>
+      <div class="live-sub" title="${esc(x.subtitle)}">${esc(x.subtitle)}</div>
+      <div class="progress"><i class="seg-${esc(x.server)}" style="width:${pct}%"></i></div>
+      <div class="live-time"><span>${clock(x.position)}</span><span>${x.runtime ? clock(x.runtime) : ""}</span></div>
+      <div class="live-meta">
+        <span title="${esc(x.device)} · ${esc(x.client)}">${esc(x.device)} · ${esc(x.client)}</span>
+        <span title="${esc(x.detail)}">${esc(quality)}${x.detail ? ` <span class="muted">(${esc(x.detail)})</span>` : ""}</span>
+        <span>${x.ip ? `<span class="ip">${esc(x.ip)}</span> · ${x.ip_scope === "remote" ? "distant" : "réseau local"}` : '<span class="muted">adresse inconnue</span>'}</span>
+      </div></div>`;
+  }).join("") || '<div class="none">Aucune lecture en cours.</div>';
+}
+async function loadLive() {
+  if (document.hidden) return;
+  try { renderLive(await api("/api/now-playing")); }
+  catch (err) { $("live-count").textContent = `indisponible (${err.message})`; }
+}
+
+/* ---------- téléchargements ---------- */
+function size(bytes) {
+  if (!bytes) return "—";
+  const go = bytes / 1024 ** 3;
+  return go >= 1 ? `${go.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Go` : `${Math.max(1, Math.round(bytes / 1024 ** 2))} Mo`;
+}
+const files = (n) => `${nf.format(n)} fichier${n > 1 ? "s" : ""}`;
+function renderDownloads(d) {
+  const t = d.totals;
+  $("dl-count").textContent = t.count
+    ? `${files(t.count)} · ${nf.format(t.people)} utilisateur${t.people > 1 ? "s" : ""}${t.size ? ` · ${size(t.size)}` : ""}` : "";
+  $("downloads").querySelector("tbody").innerHTML = d.rows.map((r) => {
+    const extra = r.kind === "sync" ? ` <span class="muted">· ${files(r.items)}${r.status ? ` · ${esc(r.status)}` : ""}</span>` : "";
+    const origin = r.kind === "sync" ? `Hors ligne${r.detail ? ` · ${esc(r.detail)}` : ""}` : esc(r.detail || "—");
+    return `<tr><td>${fmtDate(r.date_created)}</td>
+      <td><i class="dot ${esc(r.server)}"></i>${esc(LABEL[r.server] || r.server)}</td>
+      <td>${esc(r.person)}</td><td class="title">${esc(r.item_name || "—")}${extra}</td>
+      <td class="people">${origin}</td><td class="num">${size(r.size)}</td></tr>`;
+  }).join("") || '<tr><td colspan="6" class="none">Aucun téléchargement enregistré sur cette période.</td></tr>';
+  const opt = { value: "count", fmt: (n) => nf.format(n), title: (r) => `Emby : ${nf.format(r.emby)} · Jellyfin : ${nf.format(r.jellyfin)}${r.size ? ` · ${size(r.size)}` : ""}` };
+  barList("l-dl-people", d.people, opt);
+  barList("l-dl-titles", d.titles, opt);
+  $("dl-sources").innerHTML = d.sources.map((s) => {
+    const state = (v) => v === "ok" ? "lu" : v ? `indisponible (${esc(v)})` : "pas encore lu";
+    const types = s.types.length ? s.types.map((x) => `<code>${esc(x.type)}</code> × ${nf.format(x.count)}`).join(", ") : "aucune entrée pour le moment";
+    return `<p><i class="dot ${esc(s.key)}"></i> <b>${esc(s.label)}</b> — journal d'activité : ${state(s.activity)}`
+      + (s.key === "emby" ? ` ; téléchargements hors ligne : ${state(s.sync)}` : "")
+      + `<br>Types d'activité rencontrés : ${types}</p>`;
+  }).join("") + "<p>Sont comptées les entrées du journal dont le type contient « download » (hors sous-titres), plus les téléchargements hors ligne d'Emby.</p>";
+}
+
 function renderKpis(t) {
   const total = t.seconds || 0;
   const pct = (v) => total ? Math.round((v / total) * 100) : 0;
@@ -334,9 +400,10 @@ function renderStatus(s) {
 /* ---------- chargement ---------- */
 async function load() {
   const q = new URLSearchParams({ days: state.days, source: state.source, person: state.person });
-  const [d, s] = await Promise.all([api(`/api/dashboard?${q}`), api("/api/status")]);
+  const [d, s, dl] = await Promise.all([api(`/api/dashboard?${q}`), api("/api/status"), api(`/api/downloads?${q}`)]);
   renderStatus(s);
   render(d);
+  renderDownloads(dl);
   await loadPlays();
 }
 function segmented(id, key, cast) {
@@ -383,3 +450,6 @@ $("dlg-users").addEventListener("close", load);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => lastData && renderTimeline(lastData.timeline));
 load().catch((err) => { $("empty").hidden = false; $("empty").textContent = `Impossible de charger les données : ${err.message}`; });
 setInterval(() => load().catch(() => {}), 5 * 60 * 1000);
+loadLive();
+setInterval(loadLive, 10 * 1000);
+document.addEventListener("visibilitychange", loadLive);

@@ -64,6 +64,9 @@ def build_db(kind: str, path: str, seed: int, days: int = 120, n: int = 400) -> 
 def create_app(emby_db: str, jf_db: str) -> FastAPI:
     app = FastAPI()
     app.state.sessions = {"emby": [], "jellyfin": []}
+    app.state.activity = {"emby": [], "jellyfin": []}     # entrées du journal d'activité
+    app.state.items = {"emby": {}, "jellyfin": {}}        # médias connus, par identifiant
+    app.state.jobs = []                                   # téléchargements hors ligne (Emby)
 
     def check(kind: str, request: Request) -> None:
         if kind == "emby":
@@ -102,12 +105,93 @@ def create_app(emby_db: str, jf_db: str) -> FastAPI:
             async def sessions(request: Request):
                 check(kind, request)
                 return app.state.sessions[kind]
-            return custom_query, users, sessions
-        cq, us, se = make()
+            async def activity(request: Request):
+                check(kind, request)
+                q = request.query_params
+                entries = sorted(app.state.activity[kind], key=lambda e: e["Date"], reverse=True)
+                if q.get("MinDate"):
+                    entries = [e for e in entries if e["Date"] >= q["MinDate"]]
+                start, limit = int(q.get("StartIndex", 0)), int(q.get("Limit", 100))
+                return {"Items": entries[start:start + limit], "TotalRecordCount": len(entries)}
+
+            async def items(request: Request):
+                check(kind, request)
+                ids = [i for i in request.query_params.get("Ids", "").split(",") if i]
+                return {"Items": [app.state.items[kind][i] for i in ids if i in app.state.items[kind]]}
+            return custom_query, users, sessions, activity, items
+        cq, us, se, ac, it = make()
         app.get(f"{prefix}/Sessions")(se)
+        app.get(f"{prefix}/System/ActivityLog/Entries")(ac)
+        app.get(f"{prefix}/Items")(it)
         app.post(f"{prefix}/user_usage_stats/submit_custom_query")(cq)
         app.get(f"{prefix}/Users")(us)
+    @app.get("/e/emby/Sync/Jobs")
+    async def sync_jobs(request: Request):
+        check("emby", request)
+        return {"Items": app.state.jobs, "TotalRecordCount": len(app.state.jobs)}
+
     return app
+
+
+def demo_live(app: FastAPI) -> None:
+    """Remplit les faux serveurs avec des lectures en cours et des téléchargements, pour la démo."""
+    from datetime import timezone
+    now = datetime.now(timezone.utc)
+    iso = lambda d: d.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
+    video = lambda w, h: [{"Type": "Video", "Width": w, "Height": h}]
+    app.state.sessions["emby"] = [
+        {"UserId": "a1" * 16, "UserName": "Yonel", "Client": "Emby for Android TV", "DeviceName": "Shield Salon",
+         "RemoteEndPoint": "192.168.1.20", "PlayState": {"PlayMethod": "DirectPlay", "PositionTicks": 41 * 600000000},
+         "NowPlayingItem": {"Id": "1001", "Name": "Dune", "Type": "Movie", "ProductionYear": 2021,
+                            "RunTimeTicks": 155 * 600000000, "Bitrate": 18500000, "MediaStreams": video(3840, 1600)}},
+        {"UserId": "a2" * 16, "UserName": "Marie", "Client": "Emby Web", "DeviceName": "Chrome",
+         "RemoteEndPoint": "82.64.10.5", "PlayState": {"PlayMethod": "Transcode", "PositionTicks": 12 * 600000000},
+         "TranscodingInfo": {"IsVideoDirect": False, "IsAudioDirect": True, "VideoCodec": "h264", "Bitrate": 4000000,
+                             "TranscodeReasons": ["ContainerBitrateExceedsLimit"]},
+         "NowPlayingItem": {"Id": "1002", "Name": "Chikhai Bardo", "Type": "Episode", "SeriesName": "Severance",
+                            "ParentIndexNumber": 2, "IndexNumber": 7, "RunTimeTicks": 50 * 600000000,
+                            "MediaStreams": video(1920, 1080)}},
+        {"UserId": "a3" * 16, "UserName": "Lucas", "Client": "Emby Web", "DeviceName": "Firefox"},
+    ]
+    app.state.sessions["jellyfin"] = [
+        {"UserId": "b3" * 16, "UserName": "Luke", "Client": "Jellyfin Android", "DeviceName": "Pixel 9",
+         "RemoteEndPoint": "90.12.34.56",
+         "PlayState": {"PlayMethod": "DirectStream", "PositionTicks": 20 * 600000000, "IsPaused": True},
+         "NowPlayingItem": {"Id": "d" * 32, "Name": "Review", "Type": "Episode", "SeriesName": "The Bear",
+                            "ParentIndexNumber": 1, "IndexNumber": 7, "RunTimeTicks": 21 * 600000000,
+                            "Bitrate": 6200000, "MediaStreams": video(1920, 1080)}},
+    ]
+    gb = 1024 ** 3
+    app.state.items["jellyfin"] = {
+        "e" * 32: {"Id": "e" * 32, "Name": "Interstellar", "Type": "Movie", "MediaSources": [{"Size": int(14.2 * gb)}]},
+        "f" * 32: {"Id": "f" * 32, "Name": "Forks", "Type": "Episode", "SeriesName": "The Bear",
+                   "ParentIndexNumber": 2, "IndexNumber": 7, "MediaSources": [{"Size": int(2.1 * gb)}]},
+        "9" * 32: {"Id": "9" * 32, "Name": "Parasite", "Type": "Movie", "MediaSources": [{"Size": int(8.4 * gb)}]},
+    }
+    app.state.items["emby"] = {
+        "2001": {"Id": "2001", "Name": "Heat", "Type": "Movie", "MediaSources": [{"Size": int(11.6 * gb)}]},
+    }
+
+    def entry(i, kind, user, item, hours, overview):
+        return {"Id": i, "Type": kind, "UserId": user, "ItemId": item, "Date": iso(now - timedelta(hours=hours)),
+                "Name": "entrée du journal", "ShortOverview": overview}
+    app.state.activity["jellyfin"] = [
+        entry(1, "UserDownloadingContent", "b1" * 16, "e" * 32, 5, "Application : Jellyfin Android, Appareil : Pixel 9"),
+        entry(2, "UserDownloadingContent", "b1" * 16, "e" * 32, 5.1, "Application : Jellyfin Android, Appareil : Pixel 9"),
+        entry(3, "UserDownloadingContent", "b3" * 16, "f" * 32, 30, "Application : Jellyfin Web, Appareil : Firefox"),
+        entry(4, "UserDownloadingContent", "b2" * 16, "9" * 32, 75, "Application : Jellyfin Web, Appareil : Chrome"),
+        entry(5, "VideoPlayback", "b2" * 16, "9" * 32, 76, ""),
+        entry(6, "SessionStarted", "b2" * 16, None, 77, ""),
+        entry(7, "SubtitlesDownloaded", "b2" * 16, "9" * 32, 78, ""),
+    ]
+    app.state.activity["emby"] = [
+        entry(1, "UserDownloadingContent", "a3" * 16, "2001", 50, "Emby Web, Chrome"),
+        entry(2, "playback.start", "a1" * 16, "1001", 1, ""),
+    ]
+    app.state.jobs = [
+        {"Id": 12, "Name": "Dark - Saison 1", "UserId": "a2" * 16, "TargetName": "iPad de Marie", "Status": "Completed",
+         "ItemCount": 10, "Category": "Series", "RequestedItemIds": ["3001"], "DateCreated": iso(now - timedelta(days=4))},
+    ]
 
 
 if __name__ == "__main__":
@@ -116,4 +200,6 @@ if __name__ == "__main__":
     e, j = os.path.join(tmp, "emby.db"), os.path.join(tmp, "jf.db")
     build_db("emby", e, seed=1)
     build_db("jellyfin", j, seed=2)
-    uvicorn.run(create_app(e, j), host="0.0.0.0", port=9900, log_level="warning")
+    demo = create_app(e, j)
+    demo_live(demo)
+    uvicorn.run(demo, host="0.0.0.0", port=9900, log_level="warning")

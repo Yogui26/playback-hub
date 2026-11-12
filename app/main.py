@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import collector, config, db, stats
+from . import collector, config, db, live, stats
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -90,6 +90,18 @@ def api_plays(b: PlaysBody):
 @app.post("/api/plays/values")
 def api_plays_values(b: PlaysBody):
     return stats.column_values(max(0, min(b.days, 3660)), b.source, b.person, b.filters, b.column)
+
+
+@app.get("/api/now-playing")
+async def api_now_playing():
+    return await live.now_playing()
+
+
+@app.get("/api/downloads")
+def api_downloads(days: int = 30, source: str = "all", person: str = ""):
+    data = stats.downloads(max(0, min(days, 3660)), source, person)
+    data["sources"] = live.downloads_state()
+    return data
 
 
 @app.get("/api/status")

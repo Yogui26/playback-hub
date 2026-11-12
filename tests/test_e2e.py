@@ -252,3 +252,70 @@ def test_http_api_and_cache_busting(env):
         assert all(x["method"] == "Transcodage" for x in r.json()["rows"])
         v = client.post("/api/plays/values", json={"days": 0, "source": "emby", "column": "method"})
         assert {x["value"] for x in v.json()} == {"Direct Play", "Direct Stream", "Transcodage"}
+
+
+def test_now_playing(env):
+    from app import live
+    mock_servers.demo_live(env["mock"])
+    live._cache["data"] = None
+    data = asyncio.run(live.now_playing())
+    assert data["errors"] == []
+    by = {x["person"]: x for x in data["sessions"]}
+    assert set(by) == {"Yonel", "Marie", "Lucas"}        # « Luke » porte le nom commun « Lucas » ; la session
+    assert len(data["sessions"]) == 3                    # sans lecture (Lucas sur Emby) est ignorée
+    dune = by["Yonel"]
+    assert (dune["title"], dune["subtitle"], dune["method"], dune["resolution"]) == ("Dune", "2021", "Direct Play", "4K")
+    assert dune["position"] == 41 * 60 and dune["runtime"] == 155 * 60 and dune["ip_scope"] == "local"
+    marie = by["Marie"]
+    assert marie["title"] == "Severance" and marie["subtitle"] == "S02E07 · Chikhai Bardo"
+    assert marie["method"] == "Transcodage" and "vidéo → h264" in marie["detail"] and "audio" not in marie["detail"]
+    assert marie["bitrate"] == 4000000 and marie["ip_scope"] == "remote"
+    lucas = by["Lucas"]
+    assert lucas["server"] == "jellyfin" and lucas["paused"] and lucas["method"] == "Direct Stream"
+    assert data["sessions"][-1] is lucas                 # les lectures en pause passent en dernier
+
+
+def test_now_playing_reports_unreachable_server(env):
+    from app import config, live
+    live._cache["data"] = None
+    bad = config.Server("jellyfin", "Jellyfin", "http://127.0.0.1:9", "x")
+    rows, err = asyncio.run(_sessions_of(bad))
+    assert rows == [] and err.startswith("Jellyfin : ")
+
+
+async def _sessions_of(server):
+    from app import live
+    async with live._client() as client:
+        return await live._server_sessions(client, server, {})
+
+
+def test_downloads(env):
+    from app import collector, db, live, stats
+    mock_servers.demo_live(env["mock"])
+    with db.connect() as con:  # comme au tout premier démarrage : le journal est lu en entier
+        con.execute("DELETE FROM meta WHERE key LIKE 'activity_since:%' OR key LIKE 'downloads_state:%'")
+    asyncio.run(collector.sync_all())
+    d = stats.downloads(30, "all", "")
+    names = {r["item_name"]: r for r in d["rows"]}
+    # Journal d'activité : seules les entrées de téléchargement, sans les sous-titres ni les lectures.
+    assert set(names) == {"Interstellar", "The Bear - s02e07 - Forks", "Parasite", "Heat", "Dark - Saison 1"}
+    # Les deux entrées du même téléchargement (appli Android) n'en font qu'un.
+    assert d["totals"]["count"] == 4 + 10                # 4 fichiers + une saison de 10 épisodes hors ligne
+    assert names["Interstellar"]["person"].lower() == "yonel" and names["Interstellar"]["size"] == int(14.2 * 1024 ** 3)
+    assert names["Interstellar"]["detail"] == "Application : Jellyfin Android, Appareil : Pixel 9"
+    assert names["Dark - Saison 1"]["kind"] == "sync" and names["Dark - Saison 1"]["items"] == 10
+    assert names["Dark - Saison 1"]["status"] == "Completed" and names["Dark - Saison 1"]["detail"] == "iPad de Marie"
+    assert d["totals"]["size"] == sum(r["size"] or 0 for r in d["rows"])
+    assert d["people"][0]["name"] == "Marie" and d["people"][0]["count"] == 11
+    assert {t["name"] for t in d["titles"]} >= {"The Bear", "Interstellar"}
+    # Filtres globaux.
+    assert stats.downloads(30, "emby", "")["totals"]["count"] == 11
+    assert {r["item_name"] for r in stats.downloads(2, "all", "")["rows"]} == {"Interstellar", "The Bear - s02e07 - Forks"}
+    assert stats.downloads(30, "all", "Lucas")["totals"]["count"] == 2   # Lucas (Emby) + Luke (Jellyfin)
+    # Une deuxième synchro ne crée pas de doublon.
+    asyncio.run(collector.sync_all())
+    assert stats.downloads(30, "all", "")["totals"]["count"] == 14
+    state = {s["key"]: s for s in live.downloads_state()}
+    assert state["jellyfin"]["activity"] == "ok" and state["emby"]["sync"] == "ok"
+    assert {"type": "UserDownloadingContent", "count": 4} in state["jellyfin"]["types"]  # pas recompté
+    assert not live.is_download("SubtitlesDownloaded") and live.is_download("UserDownloadingContent")

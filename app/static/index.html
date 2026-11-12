@@ -33,6 +33,11 @@
 
   <div id="empty" class="notice" hidden></div>
 
+  <section class="card" id="live">
+    <h2>En cours <span class="muted small" id="live-count"></span></h2>
+    <div id="live-list" class="live-grid"></div>
+  </section>
+
   <section class="kpis" id="kpis"></section>
 
   <section class="card">
@@ -74,6 +79,21 @@
         </table></div>
       </div>
     </div>
+  </section>
+
+  <section class="card">
+    <h2>Téléchargements <span class="muted small" id="dl-count"></span></h2>
+    <div class="ip-grid">
+      <div class="table-wrap dl-scroll"><table id="downloads">
+        <thead><tr><th>Date</th><th>Serveur</th><th>Utilisateur</th><th>Titre</th><th>Origine</th><th class="num">Taille</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div>
+        <h2>Par utilisateur</h2><div id="l-dl-people" class="bars"></div>
+        <h2 class="sub">Titres les plus téléchargés</h2><div id="l-dl-titles" class="bars"></div>
+      </div>
+    </div>
+    <details class="diag"><summary>D'où viennent ces données ?</summary><div id="dl-sources"></div></details>
   </section>
 
   <section class="card">

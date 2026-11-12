@@ -217,6 +217,40 @@ def column_values(days: int, source: str, person: str, filters: dict | None, col
     return out
 
 
+def downloads(days: int, source: str, person: str) -> dict:
+    """Téléchargements sur la période : totaux, classements et liste récente."""
+    clauses, params = ["1"], []
+    if days > 0:
+        clauses.append("date_created >= ?")
+        params.append((date.today() - timedelta(days=days - 1)).isoformat())
+    if source in SOURCES:
+        clauses.append("server = ?")
+        params.append(source)
+    if person:
+        clauses.append("lower(person) = lower(?)")
+        params.append(person)
+    where = " AND ".join(clauses)
+    split = ("SUM(items) AS count, COALESCE(SUM(size), 0) AS size, "
+             "SUM(CASE WHEN server='emby' THEN items ELSE 0 END) AS emby, "
+             "SUM(CASE WHEN server='jellyfin' THEN items ELSE 0 END) AS jellyfin")
+    title = "COALESCE(series, item_name)"
+    with db.connect() as con:
+        totals = dict(con.execute(
+            f"SELECT COALESCE(SUM(items), 0) AS count, COUNT(DISTINCT lower(person)) AS people, "
+            f"COALESCE(SUM(size), 0) AS size, COUNT(DISTINCT lower({title})) AS titles "
+            f"FROM v_downloads WHERE {where}", params).fetchone())
+        people = [dict(r) for r in con.execute(
+            f"SELECT MIN(person) AS name, {split} FROM v_downloads WHERE {where} "
+            f"GROUP BY lower(person) ORDER BY count DESC, size DESC LIMIT 15", params)]
+        titles = [dict(r) for r in con.execute(
+            f"SELECT MIN({title}) AS name, {split} FROM v_downloads WHERE {where} AND {title} IS NOT NULL "
+            f"GROUP BY lower({title}) ORDER BY count DESC, size DESC LIMIT 10", params)]
+        rows = [dict(r) for r in con.execute(
+            f"SELECT date_created, server, kind, person, item_name, item_type, detail, status, size, items "
+            f"FROM v_downloads WHERE {where} ORDER BY date_created DESC LIMIT 100", params)]
+    return {"totals": totals, "people": people, "titles": titles, "rows": rows}
+
+
 def status() -> dict:
     with db.connect() as con:
         state = {r["server"]: dict(r) for r in con.execute("SELECT * FROM sync_state")}

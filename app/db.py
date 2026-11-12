@@ -56,6 +56,26 @@ CREATE TABLE IF NOT EXISTS session_ips (
 );
 
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+
+-- Téléchargements : journal d'activité des serveurs (kind = 'download') et tâches de
+-- téléchargement hors ligne d'Emby (kind = 'sync').
+CREATE TABLE IF NOT EXISTS downloads (
+    server       TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    key          TEXT NOT NULL,
+    date_created TEXT NOT NULL,
+    user_id      TEXT,
+    item_id      TEXT,
+    item_name    TEXT,
+    item_type    TEXT,
+    series       TEXT,
+    detail       TEXT,               -- application et appareil, tels que le serveur les décrit
+    status       TEXT,
+    size         INTEGER,            -- octets, quand le serveur le fournit
+    items        INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (server, kind, key)
+);
+CREATE INDEX IF NOT EXISTS idx_downloads_date ON downloads(date_created);
 """
 
 VIEW = """
@@ -66,6 +86,14 @@ SELECT p.*,
                 'Inconnu (' || substr(p.user_id, 1, 6) || ')') AS person
 FROM plays p
 LEFT JOIN users u ON u.server = p.server AND u.user_id = p.user_id;
+
+DROP VIEW IF EXISTS v_downloads;
+CREATE VIEW v_downloads AS
+SELECT d.*,
+       COALESCE(NULLIF(TRIM(u.alias), ''), NULLIF(TRIM(u.name), ''),
+                'Inconnu (' || substr(COALESCE(d.user_id, ''), 1, 6) || ')') AS person
+FROM downloads d
+LEFT JOIN users u ON u.server = d.server AND u.user_id = d.user_id;
 """
 
 
